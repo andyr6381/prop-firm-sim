@@ -9,14 +9,15 @@ st.markdown("### Test your edge with Fixed vs Dynamic risk + Smart Recommendatio
 # ================== SIDEBAR INPUTS ==================
 st.sidebar.header("Simulation Parameters")
 
-profit_target = st.sidebar.number_input("Profit Target ($)", value=1000, step=100)
+profit_target = st.sidebar.number_input("Profit Target ($)", value=3000, step=100)
 dd_limit = st.sidebar.number_input("Trailing Drawdown Limit ($)", value=2000, step=100)
-win_rate = st.sidebar.slider("Win Rate (%)", 40, 90, 50) / 100.0
-profit_factor = st.sidebar.slider("Reward : Risk Multiple", 1.0, 3.0, 1.5, 0.1)
+win_rate = st.sidebar.slider("Win Rate (%)", 40, 90, 60) / 100.0
+profit_factor = st.sidebar.slider("Reward : Risk Multiple", 1.0, 3.0, 1.6, 0.1)
 
 strategy_mode = st.sidebar.radio(
     "System Type",
-    ["Mechanical", "Discretionary"]
+    ["Mechanical", "Discretionary"],
+    index=0
 )
 
 if strategy_mode == "Discretionary":
@@ -24,7 +25,7 @@ if strategy_mode == "Discretionary":
 else:
     be_trade_percent = 0
 
-fixed_risk_amount = st.sidebar.number_input("Fixed Risk Amount ($)", value=100, step=25)
+fixed_risk_amount = st.sidebar.number_input("Fixed Risk Amount ($)", value=250, step=25)
 num_sims = st.sidebar.slider("Number of Simulations", 1000, 10000, 3000, step=500)
 
 # Calculate expectancy
