@@ -222,7 +222,11 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
 
         # 1. Fixed
         for i in range(3):
-            path, floor = simulate_one_path(fixed_risk_amount, dynamic=False)
+            path, floor = simulate_one_path(
+                fixed_risk_amount,
+                dynamic=False,
+                seed=100 + i
+            )
             color = plt.cm.tab10(i)
             axs[0].plot(path, color=color, linewidth=2, alpha=0.9)
             axs[0].plot(floor, color=color, linestyle='--', alpha=0.5)
@@ -233,7 +237,11 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
 
         # 2. Dynamic
         for i in range(3):
-            path, floor = simulate_one_path(fixed_risk_amount, dynamic=True)
+            path, floor = simulate_one_path(
+                fixed_risk_amount,
+                dynamic=True,
+                seed=200 + i
+            )
             color = plt.cm.tab10(i)
             axs[1].plot(path, color=color, linewidth=2, alpha=0.9)
             axs[1].plot(floor, color=color, linestyle='--', alpha=0.5)
