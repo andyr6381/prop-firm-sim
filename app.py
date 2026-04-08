@@ -131,7 +131,7 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
         max_risk = int(dd_limit * 0.25)
 
         for risk in range(min_risk, max_risk + 25, 25):
-            stats = run_simulation(risk, dynamic=True, num_sims=1500)
+            stats = run_simulation(risk, dynamic=True, num_sims=2000)
 
             # Safest overall recommendation
             score = (
@@ -231,7 +231,7 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
             axs[0].plot(path, color=color, linewidth=2, alpha=0.9)
             axs[0].plot(floor, color=color, linestyle='--', alpha=0.5)
         axs[0].axhline(y=profit_target, color='green', linewidth=2)
-        axs[0].set_title(f"1. Fixed ${fixed_risk_amount}")
+        axs[0].set_title(f"1. FIXED ${fixed_risk_amount} Risk (Your Current Style)")
         axs[0].grid(True, alpha=0.3)
         add_stats_box(axs[0], fixed_stats)
 
@@ -246,7 +246,7 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
             axs[1].plot(path, color=color, linewidth=2, alpha=0.9)
             axs[1].plot(floor, color=color, linestyle='--', alpha=0.5)
         axs[1].axhline(y=profit_target, color='green', linewidth=2)
-        axs[1].set_title(f"2. Dynamic ${fixed_risk_amount}")
+        axs[1].set_title(f"2. DYNAMIC ${fixed_risk_amount} Risk (halve in drawdown)")
         axs[1].grid(True, alpha=0.3)
         add_stats_box(axs[1], dynamic_stats)
 
@@ -268,7 +268,9 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
             seed += 1
 
         axs[2].axhline(y=profit_target, color='green', linewidth=2)
-        axs[2].set_title(f"3. Safest ${recommended_risk}")
+        axs[2].set_title(
+            f"3. SAFEST: Dynamic ${recommended_risk} Risk (halve in drawdown)"
+        )
         axs[2].grid(True, alpha=0.3)
         add_stats_box(axs[2], recommended_stats)
 
@@ -290,7 +292,9 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
             seed += 1
 
         axs[3].axhline(y=profit_target, color='green', linewidth=2)
-        axs[3].set_title(f"4. Fastest Safe ${fastest_risk}")
+        axs[3].set_title(
+            f"4. FASTEST SAFE: Dynamic ${fastest_risk} Risk (halve in drawdown)"
+        )
         axs[3].grid(True, alpha=0.3)
         add_stats_box(axs[3], fastest_stats)
 
