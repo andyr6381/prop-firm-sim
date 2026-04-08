@@ -12,7 +12,7 @@ st.sidebar.header("Simulation Parameters")
 profit_target = st.sidebar.number_input("Profit Target ($)", value=3000, step=100)
 dd_limit = st.sidebar.number_input("Trailing Drawdown Limit ($)", value=2000, step=100)
 win_rate = st.sidebar.slider("Win Rate (%)", 40, 90, 70) / 100.0
-profit_factor = st.sidebar.slider("Profit Factor", 1.0, 3.0, 1.9, 0.1)
+profit_factor = st.sidebar.slider("Reward : Risk Multiple", 1.0, 3.0, 1.9, 0.1)
 fixed_risk_amount = st.sidebar.number_input("Fixed Risk Amount ($)", value=400, step=25)
 num_sims = st.sidebar.slider("Number of Simulations", 1000, 10000, 3000, step=500)
 
@@ -21,6 +21,9 @@ avg_loss_r = 1.0
 avg_win_r = profit_factor
 expected_r = (win_rate * avg_win_r) - ((1 - win_rate) * avg_loss_r)
 st.sidebar.metric("System Expectancy", f"{expected_r:.2f}R per trade")
+st.sidebar.caption(
+    f"Risk ${fixed_risk_amount} → Win ${fixed_risk_amount * profit_factor:.0f} / Loss -${fixed_risk_amount}"
+)
 
 # ================== SIMULATION FUNCTIONS ==================
 @st.cache_data
@@ -50,7 +53,7 @@ def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=Fals
         breach_floors.append(peak - dd_limit)
         
         if equity < peak - dd_limit:
-            for _ in range(20):  # extend for visibility
+            for _ in range(5):
                 equities.append(equity)
                 breach_floors.append(peak - dd_limit)
             break
@@ -115,21 +118,53 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
         fixed_stats = run_simulation(fixed_risk_amount, dynamic=False, num_sims=num_sims)
         dynamic_stats = run_simulation(fixed_risk_amount, dynamic=True, num_sims=num_sims)
         
-        # Run recommendation
+        # Run safest + fastest-safe recommendations
         best_score = -999
-        recommended_risk = 250
+        recommended_risk = 200
         recommended_stats = None
-        
-        for risk in range(150, 551, 25):
+
+        fastest_score = -999
+        fastest_risk = 200
+        fastest_stats = None
+
+        min_risk = max(50, int(dd_limit * 0.05))
+        max_risk = int(dd_limit * 0.25)
+
+        for risk in range(min_risk, max_risk + 25, 25):
             stats = run_simulation(risk, dynamic=True, num_sims=1500)
-            score = stats['pass_rate'] * 2 - stats['blow_rate'] * 3 - stats['avg_trades'] * 0.5
+
+            # Safest overall recommendation
+            score = (
+                stats['pass_rate'] * 2
+                - stats['blow_rate'] * 3
+                - stats['avg_trades'] * 0.5
+            )
+
             if score > best_score:
                 best_score = score
                 recommended_risk = risk
                 recommended_stats = stats
 
+            # Fastest reasonable way to pass
+            if stats['pass_rate'] >= 60 and stats['blow_rate'] <= 40:
+                fast_score = -stats['avg_trades']
+                fast_score += stats['pass_rate'] * 0.1
+                fast_score -= stats['blow_rate'] * 0.05
+
+                if fast_score > fastest_score:
+                    fastest_score = fast_score
+                    fastest_risk = risk
+                    fastest_stats = stats
+
+        if recommended_stats is None:
+            recommended_stats = {'pass_rate': 0, 'blow_rate': 100, 'avg_trades': 300}
+
+        if fastest_stats is None:
+            fastest_risk = recommended_risk
+            fastest_stats = recommended_stats
+
         # ================== DISPLAY RESULTS ==================
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.subheader(f"Fixed ${fixed_risk_amount}")
@@ -144,52 +179,114 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
             st.metric("Avg Trades", dynamic_stats['avg_trades'])
         
         with col3:
-            st.subheader("Recommended")
+            st.subheader("Safest")
             st.metric("Risk Size", f"${recommended_risk}")
             st.metric("Pass Rate", f"{recommended_stats['pass_rate']}%")
             st.metric("Blow Rate", f"{recommended_stats['blow_rate']}%")
             st.metric("Avg Trades", recommended_stats['avg_trades'])
 
+        with col4:
+            st.subheader("Fastest Safe")
+            st.metric("Risk Size", f"${fastest_risk}")
+            st.metric("Pass Rate", f"{fastest_stats['pass_rate']}%")
+            st.metric("Blow Rate", f"{fastest_stats['blow_rate']}%")
+            st.metric("Avg Trades", fastest_stats['avg_trades'])
+
         st.success("Simulation Complete!")
 
         # ================== CHARTS ==================
-        st.subheader("Equity Curves Comparison")
-        
-        fig, axs = plt.subplots(1, 3, figsize=(18, 6))
-        
-        # Fixed Chart
+        fig, axs = plt.subplots(2, 2, figsize=(16, 12))
+        axs = axs.flatten()
+
+        def add_stats_box(ax, stats):
+            text = (
+                f"Pass Rate: {stats['pass_rate']}%\n"
+                f"Blow Rate: {stats['blow_rate']}%\n"
+                f"Avg Trades: {stats['avg_trades']}"
+            )
+            ax.text(
+                0.98,
+                0.02,
+                text,
+                transform=ax.transAxes,
+                fontsize=9,
+                verticalalignment='bottom',
+                horizontalalignment='right',
+                bbox=dict(
+                    boxstyle="round,pad=0.5",
+                    facecolor='white',
+                    edgecolor='black',
+                    alpha=0.9
+                )
+            )
+
+        # 1. Fixed
         for i in range(3):
-            path, floor = simulate_one_path(fixed_risk_amount, dynamic=False, seed=40+i)
+            path, floor = simulate_one_path(fixed_risk_amount, dynamic=False)
             color = plt.cm.tab10(i)
-            axs[0].plot(path, color=color, linewidth=2, alpha=0.9, label=f'Path {i+1}')
+            axs[0].plot(path, color=color, linewidth=2, alpha=0.9)
             axs[0].plot(floor, color=color, linestyle='--', alpha=0.5)
-        axs[0].axhline(y=profit_target, color='green', linestyle='-', label='Target')
-        axs[0].set_title(f"Fixed ${fixed_risk_amount} Risk")
-        axs[0].legend()
+        axs[0].axhline(y=profit_target, color='green', linewidth=2)
+        axs[0].set_title(f"1. Fixed ${fixed_risk_amount}")
         axs[0].grid(True, alpha=0.3)
-        
-        # Dynamic Chart
+        add_stats_box(axs[0], fixed_stats)
+
+        # 2. Dynamic
         for i in range(3):
-            path, floor = simulate_one_path(fixed_risk_amount, dynamic=True, seed=100+i)
+            path, floor = simulate_one_path(fixed_risk_amount, dynamic=True)
             color = plt.cm.tab10(i)
-            axs[1].plot(path, color=color, linewidth=2, alpha=0.9, label=f'Path {i+1}')
+            axs[1].plot(path, color=color, linewidth=2, alpha=0.9)
             axs[1].plot(floor, color=color, linestyle='--', alpha=0.5)
-        axs[1].axhline(y=profit_target, color='green', linestyle='-', label='Target')
-        axs[1].set_title(f"Dynamic ${fixed_risk_amount} Risk")
-        axs[1].legend()
+        axs[1].axhline(y=profit_target, color='green', linewidth=2)
+        axs[1].set_title(f"2. Dynamic ${fixed_risk_amount}")
         axs[1].grid(True, alpha=0.3)
-        
-        # Recommended Chart
-        for i in range(3):
-            path, floor = simulate_one_path(recommended_risk, dynamic=True, seed=200+i)
-            color = plt.cm.tab10(i)
-            axs[2].plot(path, color=color, linewidth=2, alpha=0.9, label=f'Path {i+1}')
-            axs[2].plot(floor, color=color, linestyle='--', alpha=0.5)
-        axs[2].axhline(y=profit_target, color='green', linestyle='-', label='Target')
-        axs[2].set_title(f"Recommended: Dynamic ${recommended_risk}")
-        axs[2].legend()
+        add_stats_box(axs[1], dynamic_stats)
+
+        # 3. Safest Recommendation
+        shown = 0
+        seed = recommended_risk * 10
+        while shown < 3:
+            path, floor, result = simulate_one_path(
+                recommended_risk,
+                dynamic=True,
+                seed=seed,
+                return_result=True
+            )
+            if result == 'pass':
+                color = plt.cm.tab10(shown)
+                axs[2].plot(path, color=color, linewidth=2, alpha=0.9)
+                axs[2].plot(floor, color=color, linestyle='--', alpha=0.5)
+                shown += 1
+            seed += 1
+
+        axs[2].axhline(y=profit_target, color='green', linewidth=2)
+        axs[2].set_title(f"3. Safest ${recommended_risk}")
         axs[2].grid(True, alpha=0.3)
-        
+        add_stats_box(axs[2], recommended_stats)
+
+        # 4. Fastest Safe
+        shown = 0
+        seed = fastest_risk * 20
+        while shown < 3:
+            path, floor, result = simulate_one_path(
+                fastest_risk,
+                dynamic=True,
+                seed=seed,
+                return_result=True
+            )
+            if result == 'pass':
+                color = plt.cm.tab10(shown)
+                axs[3].plot(path, color=color, linewidth=2, alpha=0.9)
+                axs[3].plot(floor, color=color, linestyle='--', alpha=0.5)
+                shown += 1
+            seed += 1
+
+        axs[3].axhline(y=profit_target, color='green', linewidth=2)
+        axs[3].set_title(f"4. Fastest Safe ${fastest_risk}")
+        axs[3].grid(True, alpha=0.3)
+        add_stats_box(axs[3], fastest_stats)
+
+        plt.tight_layout()
         st.pyplot(fig)
 
 else:
