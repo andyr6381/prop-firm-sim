@@ -79,4 +79,4 @@ The stats box in the bottom-right of each chart shows:
 
 ```bash
 python prop_simulator.py
-```
+```# prop-firm-sim
