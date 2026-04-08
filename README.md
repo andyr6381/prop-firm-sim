@@ -1,6 +1,6 @@
 # Prop Firm Challenge Monte Carlo Simulator
 
-A simple Python simulator for testing the probability of passing a prop firm evaluation account with a trailing drawdown.
+A simple Python simulator for testing the probability of passing a prop firm evaluation account with a trailing drawdown...
 
 ## What It Models
 
