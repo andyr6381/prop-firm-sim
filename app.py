@@ -13,56 +13,137 @@ profit_target = st.sidebar.number_input("Profit Target ($)", value=1000, step=10
 dd_limit = st.sidebar.number_input("Trailing Drawdown Limit ($)", value=2000, step=100)
 win_rate = st.sidebar.slider("Win Rate (%)", 40, 90, 50) / 100.0
 profit_factor = st.sidebar.slider("Reward : Risk Multiple", 1.0, 3.0, 1.5, 0.1)
+
+strategy_mode = st.sidebar.radio(
+    "System Type",
+    ["Mechanical", "Discretionary"]
+)
+
+if strategy_mode == "Discretionary":
+    be_trade_percent = st.sidebar.slider("Breakeven Trades (%)", 0, 50, 20)
+else:
+    be_trade_percent = 0
+
 fixed_risk_amount = st.sidebar.number_input("Fixed Risk Amount ($)", value=100, step=25)
 num_sims = st.sidebar.slider("Number of Simulations", 1000, 10000, 3000, step=500)
 
 # Calculate expectancy
 avg_loss_r = 1.0
 avg_win_r = profit_factor
-expected_r = (win_rate * avg_win_r) - ((1 - win_rate) * avg_loss_r)
+
+if strategy_mode == "Mechanical":
+    expected_r = (win_rate * avg_win_r) - ((1 - win_rate) * avg_loss_r)
+else:
+    effective_trade_rate = 1 - (be_trade_percent / 100)
+    expected_r = effective_trade_rate * (
+        (win_rate * avg_win_r) - ((1 - win_rate) * avg_loss_r)
+    )
+
 st.sidebar.metric("System Expectancy", f"{expected_r:.2f}R per trade")
-st.sidebar.caption(
-    f"Risk ${fixed_risk_amount} → Win ${fixed_risk_amount * profit_factor:.0f} / Loss -${fixed_risk_amount}"
-)
+
+if strategy_mode == "Mechanical":
+    st.sidebar.caption(
+        f"Risk ${fixed_risk_amount} → Win ${fixed_risk_amount * profit_factor:.0f} / Loss -${fixed_risk_amount}"
+    )
+else:
+    st.sidebar.caption(
+        f"{be_trade_percent}% of trades become breakeven. Remaining trades still use {profit_factor:.1f}R winners and -1R losses."
+    )
 
 # ================== SIMULATION FUNCTIONS ==================
 @st.cache_data
 def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=False):
     rng = np.random.default_rng(seed)
+
     equity = 0.0
     peak = 0.0
     equities = [equity]
     breach_floors = [-dd_limit]
-    current_risk = risk_dollars
-    
-    for t in range(300):
-        p_win = 0.45 if rng.random() < 0.15 else win_rate
-        win = rng.random() < p_win
-        pnl_r = avg_win_r if win else -avg_loss_r
-        
+
+    current_state = "normal"
+    streak_remaining = 0
+
+    no_trade_prob = 0.22
+    hot_start_prob = 0.04
+    cold_start_prob = 0.08
+
+    hot_shift = 0.18
+    cold_shift = -0.22
+
+    hot_continue_prob = 0.75
+    cold_continue_prob = 0.83
+
+    for _ in range(300):
+
+        # Quiet / no-trade day
+        if rng.random() < no_trade_prob:
+            equities.append(equity)
+            breach_floors.append(peak - dd_limit)
+            continue
+
+        # Start a new streak when not already in one
+        if streak_remaining <= 0:
+            current_state = "normal"
+            roll = rng.random()
+
+            if roll < hot_start_prob:
+                current_state = "hot"
+                streak_remaining = 1
+                while rng.random() < hot_continue_prob:
+                    streak_remaining += 1
+
+            elif roll < hot_start_prob + cold_start_prob:
+                current_state = "cold"
+                streak_remaining = 1
+                while rng.random() < cold_continue_prob:
+                    streak_remaining += 1
+
+        # Temporary win-rate adjustment
+        if current_state == "hot":
+            p_win = min(0.95, win_rate + hot_shift)
+        elif current_state == "cold":
+            p_win = max(0.05, win_rate + cold_shift)
+        else:
+            p_win = win_rate
+
+        if streak_remaining > 0:
+            streak_remaining -= 1
+            if streak_remaining == 0:
+                current_state = "normal"
+
+        # Mechanical vs discretionary system
+        if strategy_mode == "Discretionary" and rng.random() < (be_trade_percent / 100):
+            pnl_r = 0.0
+        else:
+            win = rng.random() < p_win
+            pnl_r = avg_win_r if win else -avg_loss_r
+
         if dynamic and equity < peak:
             current_risk = risk_dollars * 0.5
         else:
             current_risk = risk_dollars
-        
+
         pnl = current_risk * pnl_r
         equity += pnl
         peak = max(peak, equity)
-        
+
         equities.append(equity)
         breach_floors.append(peak - dd_limit)
-        
+
         if equity < peak - dd_limit:
             for _ in range(5):
                 equities.append(equity)
                 breach_floors.append(peak - dd_limit)
             break
+
         if equity >= profit_target:
             break
-    
+
     result = 'pass' if equity >= profit_target else 'blow'
+
     if return_result:
         return np.array(equities), np.array(breach_floors), result
+
     return np.array(equities), np.array(breach_floors)
 
 def run_simulation(risk_dollars, dynamic=False, num_sims=2000):
@@ -78,9 +159,26 @@ def run_simulation(risk_dollars, dynamic=False, num_sims=2000):
         
         while trade_count < 300:
             trade_count += 1
-            p_win = 0.45 if np.random.rand() < 0.15 else win_rate
-            win = np.random.rand() < p_win
-            pnl_r = avg_win_r if win else -avg_loss_r
+
+            # Quiet / no-trade day
+            if np.random.rand() < 0.22:
+                continue
+
+            # Hot / cold streak regime
+            roll = np.random.rand()
+            if roll < 0.04:
+                p_win = min(0.95, win_rate + 0.18)
+            elif roll < 0.12:
+                p_win = max(0.05, win_rate - 0.22)
+            else:
+                p_win = win_rate
+
+            # Mechanical vs discretionary system
+            if strategy_mode == "Discretionary" and np.random.rand() < (be_trade_percent / 100):
+                pnl_r = 0.0
+            else:
+                win = np.random.rand() < p_win
+                pnl_r = avg_win_r if win else -avg_loss_r
             
             if dynamic and equity < peak:
                 current_risk = risk_dollars * 0.5
