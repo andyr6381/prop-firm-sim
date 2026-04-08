@@ -266,13 +266,15 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.subheader(f"Fixed ${fixed_risk_amount}")
+            st.subheader("Fixed")
+            st.metric("Risk Size", f"${fixed_risk_amount}")
             st.metric("Pass Rate", f"{fixed_stats['pass_rate']}%")
             st.metric("Blow Rate", f"{fixed_stats['blow_rate']}%")
             st.metric("Avg Trades", fixed_stats['avg_trades'])
         
         with col2:
-            st.subheader(f"Dynamic ${fixed_risk_amount}")
+            st.subheader("Dynamic")
+            st.metric("Risk Size", f"${fixed_risk_amount}")
             st.metric("Pass Rate", f"{dynamic_stats['pass_rate']}%")
             st.metric("Blow Rate", f"{dynamic_stats['blow_rate']}%")
             st.metric("Avg Trades", dynamic_stats['avg_trades'])
