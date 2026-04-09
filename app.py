@@ -111,9 +111,17 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
         fastest_stats = None
 
         min_risk = max(50, int(dd_limit * 0.05))
+
+        # Conservative cap for the "Safest" recommendation
         max_risk = int(dd_limit * 0.25)
 
-        for risk in range(min_risk, max_risk + 25, 25):
+        # Allow the "Fastest Safe" route to evaluate all the way up to
+        # the full trailing drawdown limit.
+        fastest_max_risk = int(dd_limit)
+
+        risk_step = 25
+
+        for risk in range(min_risk, fastest_max_risk + risk_step, risk_step):
             stats = run_simulation(
                 risk,
                 dynamic=True,
@@ -127,7 +135,8 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
                 - stats['avg_trades'] * 0.5
             )
 
-            if score > best_score:
+            # Keep the main recommendation conservative.
+            if risk <= max_risk and score > best_score:
                 best_score = score
                 recommended_risk = risk
                 recommended_stats = stats
