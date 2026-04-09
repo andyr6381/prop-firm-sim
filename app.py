@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import os
 import webbrowser
 
+from prop_simulator import run_simulation
+
 st.set_page_config(page_title="Prop Firm Simulator", layout="wide")
 st.title("🚀 Prop Firm Challenge Monte Carlo Simulator")
 st.markdown("### Test your edge with Fixed vs Dynamic risk + Smart Recommendations")
@@ -153,3 +155,6 @@ else:
     st.info("👈 Adjust the settings in the sidebar and click **Run Simulation** to start.")
 
 st.caption("Built with Streamlit • Monte Carlo Prop Firm Simulator")
+
+# If simulate_one_path is used elsewhere in this file, ensure it's imported:
+# from prop_simulator import simulate_one_path
