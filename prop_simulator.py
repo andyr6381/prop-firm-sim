@@ -151,45 +151,98 @@ def run_simulation(risk_dollars, dynamic=False, num_sims=1500):
     passes = 0
     blows = 0
     trades_to_pass = []
-    
-    for _ in range(num_sims):
+
+    for sim in range(num_sims):
+        rng = np.random.default_rng(sim)
+
         equity = 0.0
         peak = 0.0
         trade_count = 0
-        current_risk = risk_dollars
-        
-        while trade_count < max_trades:
-            trade_count += 1
-            p_win = 0.45 if np.random.rand() < 0.15 else win_rate
 
-            if strategy_mode == "Discretionary" and np.random.rand() < (be_trade_percent / 100):
+        current_state = "normal"
+        streak_remaining = 0
+
+        no_trade_prob = 0.22
+        hot_start_prob = 0.04
+        cold_start_prob = 0.08
+
+        hot_shift = 0.18
+        cold_shift = -0.22
+
+        hot_continue_prob = 0.75
+        cold_continue_prob = 0.83
+
+        while trade_count < max_trades:
+
+            # Quiet / no-trade period
+            if rng.random() < no_trade_prob:
+                trade_count += 1
+                continue
+
+            # Start new streak if not already in one
+            if streak_remaining <= 0:
+                current_state = "normal"
+
+                roll = rng.random()
+                if roll < hot_start_prob:
+                    current_state = "hot"
+                    streak_remaining = 1
+                    while rng.random() < hot_continue_prob:
+                        streak_remaining += 1
+
+                elif roll < hot_start_prob + cold_start_prob:
+                    current_state = "cold"
+                    streak_remaining = 1
+                    while rng.random() < cold_continue_prob:
+                        streak_remaining += 1
+
+            # Temporary win-rate adjustment
+            if current_state == "hot":
+                p_win = min(0.95, win_rate + hot_shift)
+            elif current_state == "cold":
+                p_win = max(0.05, win_rate + cold_shift)
+            else:
+                p_win = win_rate
+
+            if streak_remaining > 0:
+                streak_remaining -= 1
+                if streak_remaining == 0:
+                    current_state = "normal"
+
+            # Mechanical vs discretionary mode
+            if strategy_mode == "Discretionary" and rng.random() < (be_trade_percent / 100):
                 pnl_r = 0.0
             else:
-                win = np.random.rand() < p_win
+                win = rng.random() < p_win
                 pnl_r = avg_win_r if win else -avg_loss_r
-            
+
             if dynamic and equity < peak:
                 current_risk = risk_dollars * 0.5
             else:
                 current_risk = risk_dollars
-            
+
             pnl = current_risk * pnl_r
             equity += pnl
             peak = max(peak, equity)
-            
+
+            trade_count += 1
+
             if equity < peak - dd_limit:
                 blows += 1
                 break
+
             if equity >= profit_target:
                 passes += 1
                 trades_to_pass.append(trade_count)
                 break
+
         else:
             if equity >= profit_target:
                 passes += 1
+                trades_to_pass.append(trade_count)
             else:
                 blows += 1
-    
+
     avg_trades = round(np.mean(trades_to_pass), 1) if trades_to_pass else max_trades
 
     return {
