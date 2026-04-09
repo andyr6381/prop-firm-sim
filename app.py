@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import os
 import webbrowser
 
-from prop_simulator import run_simulation
+from prop_simulator import run_simulation, simulate_one_path
 
 st.set_page_config(page_title="Prop Firm Simulator", layout="wide")
 st.title("🚀 Prop Firm Challenge Monte Carlo Simulator")
@@ -148,6 +148,143 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
             st.metric("Pass Rate", f"{fastest_stats['pass_rate']}%")
             st.metric("Blow Rate", f"{fastest_stats['blow_rate']}%")
             st.metric("Avg Trades", fastest_stats['avg_trades'])
+
+
+        # ================== CHARTS ==================
+        fig, axs = plt.subplots(2, 2, figsize=(16, 12))
+        axs = axs.flatten()
+
+        def add_stats_box(ax, risk, stats):
+            text = (
+                f"Risk: ${risk}\n"
+                f"Pass Rate: {stats['pass_rate']}%\n"
+                f"Blow Rate: {stats['blow_rate']}%\n"
+                f"Avg Trades: {stats['avg_trades']}"
+            )
+            ax.text(
+                0.98,
+                0.02,
+                text,
+                transform=ax.transAxes,
+                fontsize=9,
+                verticalalignment='bottom',
+                horizontalalignment='right',
+                bbox=dict(
+                    boxstyle="round,pad=0.5",
+                    facecolor='white',
+                    edgecolor='black',
+                    alpha=0.9
+                )
+            )
+
+        # 1. Fixed
+        shown = 0
+        seed = 100
+        while shown < 3:
+            path, floor, result = simulate_one_path(
+                fixed_risk_amount,
+                dynamic=False,
+                seed=seed,
+                return_result=True
+            )
+
+            if fixed_stats['pass_rate'] > 50:
+                should_show = result == 'pass'
+            else:
+                should_show = True
+
+            if should_show:
+                color = plt.cm.tab10(shown)
+                axs[0].plot(path, color=color, linewidth=2)
+                axs[0].plot(floor, color=color, linestyle='--', alpha=0.5)
+                shown += 1
+
+            seed += 1
+
+        axs[0].axhline(y=profit_target, color='green', linewidth=2)
+        axs[0].set_title(f"1. FIXED ${fixed_risk_amount} Risk")
+        axs[0].grid(True, alpha=0.3)
+        add_stats_box(axs[0], fixed_risk_amount, fixed_stats)
+
+        # 2. Dynamic
+        shown = 0
+        seed = 200
+        while shown < 3:
+            path, floor, result = simulate_one_path(
+                fixed_risk_amount,
+                dynamic=True,
+                seed=seed,
+                return_result=True
+            )
+
+            if dynamic_stats['pass_rate'] > 50:
+                should_show = result == 'pass'
+            else:
+                should_show = True
+
+            if should_show:
+                color = plt.cm.tab10(shown)
+                axs[1].plot(path, color=color, linewidth=2)
+                axs[1].plot(floor, color=color, linestyle='--', alpha=0.5)
+                shown += 1
+
+            seed += 1
+
+        axs[1].axhline(y=profit_target, color='green', linewidth=2)
+        axs[1].set_title(f"2. DYNAMIC ${fixed_risk_amount} Risk (halve in drawdown)")
+        axs[1].grid(True, alpha=0.3)
+        add_stats_box(axs[1], fixed_risk_amount, dynamic_stats)
+
+        # 3. Safest
+        shown = 0
+        seed = recommended_risk * 10
+        while shown < 3:
+            path, floor, result = simulate_one_path(
+                recommended_risk,
+                dynamic=True,
+                seed=seed,
+                return_result=True
+            )
+
+            if result == 'pass':
+                color = plt.cm.tab10(shown)
+                axs[2].plot(path, color=color, linewidth=2)
+                axs[2].plot(floor, color=color, linestyle='--', alpha=0.5)
+                shown += 1
+
+            seed += 1
+
+        axs[2].axhline(y=profit_target, color='green', linewidth=2)
+        axs[2].set_title(f"3. SAFEST ${recommended_risk} Risk")
+        axs[2].grid(True, alpha=0.3)
+        add_stats_box(axs[2], recommended_risk, recommended_stats)
+
+        # 4. Fastest Safe
+        shown = 0
+        seed = fastest_risk * 20
+        while shown < 3:
+            path, floor, result = simulate_one_path(
+                fastest_risk,
+                dynamic=True,
+                seed=seed,
+                return_result=True
+            )
+
+            if result == 'pass':
+                color = plt.cm.tab10(shown)
+                axs[3].plot(path, color=color, linewidth=2)
+                axs[3].plot(floor, color=color, linestyle='--', alpha=0.5)
+                shown += 1
+
+            seed += 1
+
+        axs[3].axhline(y=profit_target, color='green', linewidth=2)
+        axs[3].set_title(f"4. FASTEST SAFE ${fastest_risk} Risk")
+        axs[3].grid(True, alpha=0.3)
+        add_stats_box(axs[3], fastest_risk, fastest_stats)
+
+        plt.tight_layout()
+        st.pyplot(fig)
 
         st.success("Simulation Complete!")
 
