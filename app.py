@@ -44,29 +44,30 @@ else:
 
 st.sidebar.metric("System Expectancy", f"{expected_r:.2f}R per trade")
 
-# ================== README BUTTON ==================
+# ================== README / HELP ==================
 st.sidebar.markdown("---")
 st.sidebar.subheader("Documentation")
 
-if st.sidebar.button("📖 Open README.md", use_container_width=True):
+show_readme = st.sidebar.checkbox("📖 Show README / Help")
+
+st.sidebar.markdown(
+    "[Open README on GitHub](https://github.com/andyr6381/prop-firm-sim/blob/main/README.md)"
+)
+
+if show_readme:
+    st.markdown("# README / Help")
+
     readme_path = os.path.join(os.path.dirname(__file__), "README.md")
-    
+
     if os.path.exists(readme_path):
-        try:
-            # Primary method: Try to open as a local file in browser
-            webbrowser.open('file://' + os.path.abspath(readme_path))
-            st.sidebar.success("✅ README.md opened in browser!")
-        except Exception:
-            try:
-                # Fallback for macOS
-                import subprocess
-                subprocess.call(['open', readme_path])
-                st.sidebar.success("✅ README.md opened!")
-            except Exception:
-                st.sidebar.error("Could not open README automatically.")
-                st.sidebar.info(f"File is located at:\n`{readme_path}`")
+        with open(readme_path, "r", encoding="utf-8") as f:
+            readme_text = f.read()
+
+        st.markdown(readme_text)
     else:
-        st.sidebar.error("README.md file not found in the app folder.")
+        st.error("README.md file not found in the app folder.")
+
+    st.stop()
 
 # ================== REST OF YOUR APP ==================
 if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
