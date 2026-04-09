@@ -305,10 +305,17 @@ fastest_dynamic = True
 fastest_stats = None
 
 min_risk = max(50, int(dd_limit * 0.05))
+
+# Standard recommendation search remains conservative.
 max_risk = int(dd_limit * 0.25)
+
+# Allow the "Fastest Safe" route to test up to the full drawdown limit.
+# This means on a $2000 trailing DD account it can evaluate risk sizes up to $2000.
+fastest_max_risk = int(dd_limit)
+
 risk_step = 25
 
-risk_sizes = list(range(min_risk, max_risk + risk_step, risk_step))
+risk_sizes = list(range(min_risk, fastest_max_risk + risk_step, risk_step))
 
 for risk in risk_sizes:
     stats = run_simulation(risk, dynamic=True, num_sims=2000)
@@ -327,7 +334,9 @@ for risk in risk_sizes:
         - stats['avg_trades'] * 0.5
     )
 
-    if score > best_score:
+    # Keep the main recommendation conservative by only considering
+    # risk sizes up to the original 25% of drawdown limit.
+    if risk <= max_risk and score > best_score:
         best_score = score
         recommended_risk = risk
         recommended_dynamic = True
