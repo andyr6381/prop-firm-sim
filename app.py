@@ -48,11 +48,8 @@ st.sidebar.metric("System Expectancy", f"{expected_r:.2f}R per trade")
 st.sidebar.markdown("---")
 st.sidebar.subheader("Documentation")
 
-show_readme = st.sidebar.checkbox("📖 Show README / Help")
+show_readme = st.sidebar.checkbox("📖 Show README")
 
-st.sidebar.markdown(
-    "[Open README on GitHub](https://github.com/andyr6381/prop-firm-sim/blob/main/README.md)"
-)
 
 if show_readme:
     st.markdown("# README / Help")
