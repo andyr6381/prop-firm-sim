@@ -30,6 +30,22 @@ else:
     be_trade_percent = 0
 
 fixed_risk_amount = st.sidebar.number_input("Fixed Risk Amount ($)", value=250, step=25)
+
+consistency_limit_percent = st.sidebar.slider(
+    "Consistency Rule (% of Profit Target)",
+    min_value=0,
+    max_value=100,
+    value=0,
+    step=5,
+    help="0 disables the rule. Example: 20 means no single winning trade can contribute more than 20% of the profit target."
+)
+
+consistency_cap_amount = (
+    profit_target * (consistency_limit_percent / 100)
+    if consistency_limit_percent > 0
+    else None
+)
+
 num_sims = st.sidebar.slider("Number of Simulations", 1000, 10000, 3000, step=500)
 
 # Calculate expectancy
@@ -72,8 +88,18 @@ if show_readme:
 if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
     with st.spinner("Running thousands of simulations... This may take a few seconds"):
         
-        fixed_stats = run_simulation(fixed_risk_amount, dynamic=False, num_sims=num_sims)
-        dynamic_stats = run_simulation(fixed_risk_amount, dynamic=True, num_sims=num_sims)
+        fixed_stats = run_simulation(
+            fixed_risk_amount,
+            dynamic=False,
+            num_sims=num_sims,
+            consistency_cap=consistency_cap_amount
+        )
+        dynamic_stats = run_simulation(
+            fixed_risk_amount,
+            dynamic=True,
+            num_sims=num_sims,
+            consistency_cap=consistency_cap_amount
+        )
         
         # Recommendation logic (simplified)
         best_score = -999
@@ -88,7 +114,12 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
         max_risk = int(dd_limit * 0.25)
 
         for risk in range(min_risk, max_risk + 25, 25):
-            stats = run_simulation(risk, dynamic=True, num_sims=2000)
+            stats = run_simulation(
+                risk,
+                dynamic=True,
+                num_sims=2000,
+                consistency_cap=consistency_cap_amount
+            )
 
             score = (
                 stats['pass_rate'] * 2
@@ -154,6 +185,12 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
         fig, axs = plt.subplots(2, 2, figsize=(16, 12))
         axs = axs.flatten()
 
+        consistency_suffix = (
+            f"Consistency Cap: ${consistency_cap_amount:.0f} ({consistency_limit_percent}%)"
+            if consistency_cap_amount is not None
+            else "No Consistency Cap"
+        )
+
         def add_stats_box(ax, risk, stats):
             text = (
                 f"Risk: ${risk}\n"
@@ -185,6 +222,7 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
                 fixed_risk_amount,
                 dynamic=False,
                 seed=seed,
+                consistency_cap=consistency_cap_amount,
                 return_result=True
             )
 
@@ -202,7 +240,21 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
             seed += 1
 
         axs[0].axhline(y=profit_target, color='green', linewidth=2)
-        axs[0].set_title(f"1. FIXED ${fixed_risk_amount} Risk")
+        axs[0].set_title(
+            f"1. FIXED ${fixed_risk_amount} Risk",
+            fontsize=13,
+            fontweight='bold',
+            pad=28
+        )
+        axs[0].text(
+            0.5,
+            1.01,
+            f"Your Current Style\n{consistency_suffix}",
+            transform=axs[0].transAxes,
+            ha='center',
+            va='bottom',
+            fontsize=10
+        )
         axs[0].grid(True, alpha=0.3)
         add_stats_box(axs[0], fixed_risk_amount, fixed_stats)
 
@@ -214,6 +266,7 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
                 fixed_risk_amount,
                 dynamic=True,
                 seed=seed,
+                consistency_cap=consistency_cap_amount,
                 return_result=True
             )
 
@@ -231,7 +284,21 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
             seed += 1
 
         axs[1].axhline(y=profit_target, color='green', linewidth=2)
-        axs[1].set_title(f"2. DYNAMIC ${fixed_risk_amount} Risk (halve in drawdown)")
+        axs[1].set_title(
+            f"2. DYNAMIC ${fixed_risk_amount} Risk",
+            fontsize=13,
+            fontweight='bold',
+            pad=28
+        )
+        axs[1].text(
+            0.5,
+            1.01,
+            f"Rule: Halve Risk in Drawdown\n{consistency_suffix}",
+            transform=axs[1].transAxes,
+            ha='center',
+            va='bottom',
+            fontsize=10
+        )
         axs[1].grid(True, alpha=0.3)
         add_stats_box(axs[1], fixed_risk_amount, dynamic_stats)
 
@@ -243,6 +310,7 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
                 recommended_risk,
                 dynamic=True,
                 seed=seed,
+                consistency_cap=consistency_cap_amount,
                 return_result=True
             )
 
@@ -256,7 +324,19 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
 
         axs[2].axhline(y=profit_target, color='green', linewidth=2)
         axs[2].set_title(
-            f"3. SAFEST: Dynamic ${recommended_risk} Risk (halve in drawdown)"
+            f"3. SAFEST: Dynamic ${recommended_risk} Risk",
+            fontsize=13,
+            fontweight='bold',
+            pad=28
+        )
+        axs[2].text(
+            0.5,
+            1.01,
+            f"Rule: Halve to ${recommended_risk // 2} in Drawdown\n{consistency_suffix}",
+            transform=axs[2].transAxes,
+            ha='center',
+            va='bottom',
+            fontsize=10
         )
         axs[2].grid(True, alpha=0.3)
         add_stats_box(axs[2], recommended_risk, recommended_stats)
@@ -269,6 +349,7 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
                 fastest_risk,
                 dynamic=True,
                 seed=seed,
+                consistency_cap=consistency_cap_amount,
                 return_result=True
             )
 
@@ -282,7 +363,19 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
 
         axs[3].axhline(y=profit_target, color='green', linewidth=2)
         axs[3].set_title(
-            f"4. FASTEST SAFE: Dynamic ${fastest_risk} Risk (halve in drawdown)"
+            f"4. FASTEST SAFE: Dynamic ${fastest_risk} Risk",
+            fontsize=13,
+            fontweight='bold',
+            pad=28
+        )
+        axs[3].text(
+            0.5,
+            1.01,
+            f"Rule: Halve to ${fastest_risk // 2} in Drawdown\n{consistency_suffix}",
+            transform=axs[3].transAxes,
+            ha='center',
+            va='bottom',
+            fontsize=10
         )
         axs[3].grid(True, alpha=0.3)
         add_stats_box(axs[3], fastest_risk, fastest_stats)

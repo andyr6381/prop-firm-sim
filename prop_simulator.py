@@ -7,6 +7,7 @@ dd_limit = 2000
 win_rate = 0.6
 profit_factor = 1.6
 fixed_risk_amount = 250   # ← Change this freely
+consistency_limit_percent = 20   # 0 disables. Example: 20 = max 20% of target profit per winning trade
 
 strategy_mode = "Mechanical"   # "Mechanical" or "Discretionary"
 be_trade_percent = 20           # Only used in Discretionary mode
@@ -18,6 +19,14 @@ num_sims = 2000
 # e.g. 1.5 means risk $250 to make $375
 avg_loss_r = 1.0
 avg_win_r = profit_factor
+
+# Optional prop-firm consistency rule.
+# Example: target $3000 and limit 20% = max $600 profit per winning trade.
+consistency_cap_amount = (
+    profit_target * (consistency_limit_percent / 100)
+    if consistency_limit_percent > 0
+    else None
+)
 
 # Calculate and display system expectancy in R
 if strategy_mode == "Mechanical":
@@ -33,6 +42,11 @@ print(f"System Type: {strategy_mode}")
 if strategy_mode == "Discretionary":
     print(f"Breakeven Trades: {be_trade_percent}%")
 print(f"System Expectancy: {expected_r:.2f}R per trade")
+if consistency_cap_amount is not None:
+    print(
+        f"Consistency Rule Enabled: Max ${consistency_cap_amount:.0f} per winning trade "
+        f"({consistency_limit_percent}% of target)"
+    )
 
 def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=False):
     rng = np.random.default_rng(seed)
@@ -124,6 +138,11 @@ def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=Fals
             current_risk = risk_dollars
 
         pnl = current_risk * pnl_r
+
+        # Apply optional consistency cap to profitable trades.
+        if consistency_cap_amount is not None and pnl > 0:
+            pnl = min(pnl, consistency_cap_amount)
+
         equity += pnl
         peak = max(peak, equity)
 
@@ -222,6 +241,11 @@ def run_simulation(risk_dollars, dynamic=False, num_sims=1500):
                 current_risk = risk_dollars
 
             pnl = current_risk * pnl_r
+
+            # Apply optional consistency cap to profitable trades.
+            if consistency_cap_amount is not None and pnl > 0:
+                pnl = min(pnl, consistency_cap_amount)
+
             equity += pnl
             peak = max(peak, equity)
 
@@ -374,7 +398,28 @@ for i in range(3):
     axs[0].plot(path, color=color, linewidth=2.0, alpha=0.9, label=f'Fixed Path {i+1}')
     axs[0].plot(floor, color=color, linestyle='--', alpha=0.55)
 axs[0].axhline(y=profit_target, color='green', linestyle='-', linewidth=2.5, label='Pass Target')
-axs[0].set_title(f'1. FIXED ${fixed_risk_amount} Risk (Your Current Style)')
+consistency_suffix = (
+    f'Consistency Cap: ${consistency_cap_amount:.0f} ({consistency_limit_percent}%)'
+    if consistency_cap_amount is not None
+    else 'No Consistency Cap'
+)
+
+axs[0].set_title(
+    f'1. FIXED ${fixed_risk_amount} Risk',
+    fontsize=13,
+    fontweight='bold',
+    pad=28
+)
+axs[0].text(
+    0.5,
+    1.01,
+    f'Your Current Style\n{consistency_suffix}',
+    transform=axs[0].transAxes,
+    ha='center',
+    va='bottom',
+    fontsize=10,
+    fontweight='normal'
+)
 axs[0].set_ylabel('Profit / Loss ($)')
 axs[0].legend(loc='upper left')
 axs[0].grid(True, alpha=0.3)
@@ -392,7 +437,22 @@ for i in range(3):
     axs[1].plot(path, color=color, linewidth=2.0, alpha=0.9, label=f'Dynamic Path {i+1}')
     axs[1].plot(floor, color=color, linestyle='--', alpha=0.55)
 axs[1].axhline(y=profit_target, color='green', linestyle='-', linewidth=2.5, label='Pass Target')
-axs[1].set_title(f'2. DYNAMIC ${fixed_risk_amount} Risk (halve in drawdown)')
+axs[1].set_title(
+    f'2. DYNAMIC ${fixed_risk_amount} Risk',
+    fontsize=13,
+    fontweight='bold',
+    pad=28
+)
+axs[1].text(
+    0.5,
+    1.01,
+    f'Rule: Halve Risk in Drawdown\n{consistency_suffix}',
+    transform=axs[1].transAxes,
+    ha='center',
+    va='bottom',
+    fontsize=10,
+    fontweight='normal'
+)
 axs[1].set_ylabel('Profit / Loss ($)')
 axs[1].legend(loc='upper left')
 axs[1].grid(True, alpha=0.3)
@@ -425,7 +485,22 @@ while shown < 3:
     seed += 1
 
 axs[2].axhline(y=profit_target, color='green', linestyle='-', linewidth=2.5, label='Pass Target')
-axs[2].set_title(f'3. SAFEST: Dynamic ${recommended_risk} Risk (halve in drawdown)')
+axs[2].set_title(
+    f'3. SAFEST: Dynamic ${recommended_risk} Risk',
+    fontsize=13,
+    fontweight='bold',
+    pad=28
+)
+axs[2].text(
+    0.5,
+    1.01,
+    f'Rule: Halve to ${half_risk} in Drawdown\n{consistency_suffix}',
+    transform=axs[2].transAxes,
+    ha='center',
+    va='bottom',
+    fontsize=10,
+    fontweight='normal'
+)
 axs[2].set_xlabel('Number of Trades')
 axs[2].set_ylabel('Profit / Loss ($)')
 axs[2].legend(loc='upper left')
@@ -465,7 +540,20 @@ while shown < 3:
 
 axs[3].axhline(y=profit_target, color='green', linestyle='-', linewidth=2.5, label='Pass Target')
 axs[3].set_title(
-    f'4. FASTEST SAFE: Dynamic ${fastest_risk} Risk (halve in drawdown)'
+    f'4. FASTEST SAFE: Dynamic ${fastest_risk} Risk',
+    fontsize=13,
+    fontweight='bold',
+    pad=28
+)
+axs[3].text(
+    0.5,
+    1.01,
+    f'Rule: Halve to ${fastest_risk // 2} in Drawdown\n{consistency_suffix}',
+    transform=axs[3].transAxes,
+    ha='center',
+    va='bottom',
+    fontsize=10,
+    fontweight='normal'
 )
 axs[3].set_xlabel('Number of Trades')
 axs[3].set_ylabel('Profit / Loss ($)')
