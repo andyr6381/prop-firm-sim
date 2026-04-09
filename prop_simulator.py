@@ -48,7 +48,13 @@ if consistency_cap_amount is not None:
         f"({consistency_limit_percent}% of target)"
     )
 
-def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=False):
+def simulate_one_path(
+    risk_dollars,
+    dynamic=False,
+    seed=None,
+    consistency_cap=None,
+    return_result=False
+):
     rng = np.random.default_rng(seed)
 
     equity = 0.0
@@ -140,7 +146,9 @@ def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=Fals
         pnl = current_risk * pnl_r
 
         # Apply optional consistency cap to profitable trades.
-        if consistency_cap_amount is not None and pnl > 0:
+        if consistency_cap is not None and pnl > 0:
+            pnl = min(pnl, consistency_cap)
+        elif consistency_cap is None and consistency_cap_amount is not None and pnl > 0:
             pnl = min(pnl, consistency_cap_amount)
 
         equity += pnl
@@ -166,7 +174,12 @@ def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=Fals
 
     return np.array(equities), np.array(breach_floors)
 
-def run_simulation(risk_dollars, dynamic=False, num_sims=1500):
+def run_simulation(
+    risk_dollars,
+    dynamic=False,
+    num_sims=1500,
+    consistency_cap=None
+):
     passes = 0
     blows = 0
     trades_to_pass = []
@@ -243,7 +256,9 @@ def run_simulation(risk_dollars, dynamic=False, num_sims=1500):
             pnl = current_risk * pnl_r
 
             # Apply optional consistency cap to profitable trades.
-            if consistency_cap_amount is not None and pnl > 0:
+            if consistency_cap is not None and pnl > 0:
+                pnl = min(pnl, consistency_cap)
+            elif consistency_cap is None and consistency_cap_amount is not None and pnl > 0:
                 pnl = min(pnl, consistency_cap_amount)
 
             equity += pnl
