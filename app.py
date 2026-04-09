@@ -255,7 +255,9 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
             seed += 1
 
         axs[2].axhline(y=profit_target, color='green', linewidth=2)
-        axs[2].set_title(f"3. SAFEST ${recommended_risk} Risk")
+        axs[2].set_title(
+            f"3. SAFEST: Dynamic ${recommended_risk} Risk (halve in drawdown)"
+        )
         axs[2].grid(True, alpha=0.3)
         add_stats_box(axs[2], recommended_risk, recommended_stats)
 
@@ -279,7 +281,9 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
             seed += 1
 
         axs[3].axhline(y=profit_target, color='green', linewidth=2)
-        axs[3].set_title(f"4. FASTEST SAFE ${fastest_risk} Risk")
+        axs[3].set_title(
+            f"4. FASTEST SAFE: Dynamic ${fastest_risk} Risk (halve in drawdown)"
+        )
         axs[3].grid(True, alpha=0.3)
         add_stats_box(axs[3], fastest_risk, fastest_stats)
 
