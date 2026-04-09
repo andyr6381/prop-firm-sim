@@ -1,6 +1,9 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
+import os
+import subprocess
+import webbrowser
 
 st.set_page_config(page_title="Prop Firm Simulator", layout="wide")
 st.title("🚀 Prop Firm Challenge Monte Carlo Simulator")
@@ -42,14 +45,29 @@ else:
 
 st.sidebar.metric("System Expectancy", f"{expected_r:.2f}R per trade")
 
-if strategy_mode == "Mechanical":
-    st.sidebar.caption(
-        f"Risk ${fixed_risk_amount} → Win ${fixed_risk_amount * profit_factor:.0f} / Loss -${fixed_risk_amount}"
-    )
-else:
-    st.sidebar.caption(
-        f"{be_trade_percent}% of trades become breakeven. Remaining trades still use {profit_factor:.1f}R winners and -1R losses."
-    )
+# ================== README BUTTON ==================
+st.sidebar.markdown("---")
+if st.sidebar.button("📖 Open README.md", use_container_width=True):
+    readme_path = os.path.join(os.path.dirname(__file__), "README.md")
+    
+    if os.path.exists(readme_path):
+        try:
+            if os.name == 'nt':  # Windows
+                os.startfile(readme_path)
+            elif os.name == 'posix':  # macOS / Linux
+                try:
+                    subprocess.call(['open', readme_path])           # macOS
+                except:
+                    try:
+                        subprocess.call(['xdg-open', readme_path])   # Linux
+                    except:
+                        webbrowser.open('file://' + readme_path)
+            st.sidebar.success("✅ README opened!")
+        except Exception:
+            st.sidebar.error("Could not open README automatically.")
+            st.sidebar.info(f"File location: {readme_path}")
+    else:
+        st.sidebar.error("README.md not found in the app folder.")
 
 # ================== SIMULATION FUNCTIONS ==================
 @st.cache_data
@@ -76,30 +94,25 @@ def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=Fals
 
     for _ in range(300):
 
-        # Quiet / no-trade day
         if rng.random() < no_trade_prob:
             equities.append(equity)
             breach_floors.append(peak - dd_limit)
             continue
 
-        # Start a new streak when not already in one
         if streak_remaining <= 0:
             current_state = "normal"
             roll = rng.random()
-
             if roll < hot_start_prob:
                 current_state = "hot"
                 streak_remaining = 1
                 while rng.random() < hot_continue_prob:
                     streak_remaining += 1
-
             elif roll < hot_start_prob + cold_start_prob:
                 current_state = "cold"
                 streak_remaining = 1
                 while rng.random() < cold_continue_prob:
                     streak_remaining += 1
 
-        # Temporary win-rate adjustment
         if current_state == "hot":
             p_win = min(0.95, win_rate + hot_shift)
         elif current_state == "cold":
@@ -112,7 +125,6 @@ def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=Fals
             if streak_remaining == 0:
                 current_state = "normal"
 
-        # Mechanical vs discretionary system
         if strategy_mode == "Discretionary" and rng.random() < (be_trade_percent / 100):
             pnl_r = 0.0
         else:
@@ -161,11 +173,9 @@ def run_simulation(risk_dollars, dynamic=False, num_sims=2000):
         while trade_count < 300:
             trade_count += 1
 
-            # Quiet / no-trade day
             if np.random.rand() < 0.22:
                 continue
 
-            # Hot / cold streak regime
             roll = np.random.rand()
             if roll < 0.04:
                 p_win = min(0.95, win_rate + 0.18)
@@ -174,7 +184,6 @@ def run_simulation(risk_dollars, dynamic=False, num_sims=2000):
             else:
                 p_win = win_rate
 
-            # Mechanical vs discretionary system
             if strategy_mode == "Discretionary" and np.random.rand() < (be_trade_percent / 100):
                 pnl_r = 0.0
             else:
@@ -217,7 +226,7 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
         fixed_stats = run_simulation(fixed_risk_amount, dynamic=False, num_sims=num_sims)
         dynamic_stats = run_simulation(fixed_risk_amount, dynamic=True, num_sims=num_sims)
         
-        # Run safest + fastest-safe recommendations
+        # Recommendation logic
         best_score = -999
         recommended_risk = 200
         recommended_stats = None
@@ -232,7 +241,6 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
         for risk in range(min_risk, max_risk + 25, 25):
             stats = run_simulation(risk, dynamic=True, num_sims=2000)
 
-            # Safest overall recommendation
             score = (
                 stats['pass_rate'] * 2
                 - stats['blow_rate'] * 3
@@ -244,7 +252,6 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
                 recommended_risk = risk
                 recommended_stats = stats
 
-            # Fastest reasonable way to pass
             if stats['pass_rate'] >= 60 and stats['blow_rate'] <= 40:
                 fast_score = -stats['avg_trades']
                 fast_score += stats['pass_rate'] * 0.1
@@ -295,112 +302,9 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
 
         st.success("Simulation Complete!")
 
-        # ================== CHARTS ==================
-        fig, axs = plt.subplots(2, 2, figsize=(16, 12))
-        axs = axs.flatten()
-
-        def add_stats_box(ax, stats):
-            text = (
-                f"Pass Rate: {stats['pass_rate']}%\n"
-                f"Blow Rate: {stats['blow_rate']}%\n"
-                f"Avg Trades: {stats['avg_trades']}"
-            )
-            ax.text(
-                0.98,
-                0.02,
-                text,
-                transform=ax.transAxes,
-                fontsize=9,
-                verticalalignment='bottom',
-                horizontalalignment='right',
-                bbox=dict(
-                    boxstyle="round,pad=0.5",
-                    facecolor='white',
-                    edgecolor='black',
-                    alpha=0.9
-                )
-            )
-
-        # 1. Fixed
-        for i in range(3):
-            path, floor = simulate_one_path(
-                fixed_risk_amount,
-                dynamic=False,
-                seed=100 + i
-            )
-            color = plt.cm.tab10(i)
-            axs[0].plot(path, color=color, linewidth=2, alpha=0.9)
-            axs[0].plot(floor, color=color, linestyle='--', alpha=0.5)
-        axs[0].axhline(y=profit_target, color='green', linewidth=2)
-        axs[0].set_title(f"1. FIXED ${fixed_risk_amount} Risk (Your Current Style)")
-        axs[0].grid(True, alpha=0.3)
-        add_stats_box(axs[0], fixed_stats)
-
-        # 2. Dynamic
-        for i in range(3):
-            path, floor = simulate_one_path(
-                fixed_risk_amount,
-                dynamic=True,
-                seed=200 + i
-            )
-            color = plt.cm.tab10(i)
-            axs[1].plot(path, color=color, linewidth=2, alpha=0.9)
-            axs[1].plot(floor, color=color, linestyle='--', alpha=0.5)
-        axs[1].axhline(y=profit_target, color='green', linewidth=2)
-        axs[1].set_title(f"2. DYNAMIC ${fixed_risk_amount} Risk (halve in drawdown)")
-        axs[1].grid(True, alpha=0.3)
-        add_stats_box(axs[1], dynamic_stats)
-
-        # 3. Safest Recommendation
-        shown = 0
-        seed = recommended_risk * 10
-        while shown < 3:
-            path, floor, result = simulate_one_path(
-                recommended_risk,
-                dynamic=True,
-                seed=seed,
-                return_result=True
-            )
-            if result == 'pass':
-                color = plt.cm.tab10(shown)
-                axs[2].plot(path, color=color, linewidth=2, alpha=0.9)
-                axs[2].plot(floor, color=color, linestyle='--', alpha=0.5)
-                shown += 1
-            seed += 1
-
-        axs[2].axhline(y=profit_target, color='green', linewidth=2)
-        axs[2].set_title(
-            f"3. SAFEST: Dynamic ${recommended_risk} Risk (halve in drawdown)"
-        )
-        axs[2].grid(True, alpha=0.3)
-        add_stats_box(axs[2], recommended_stats)
-
-        # 4. Fastest Safe
-        shown = 0
-        seed = fastest_risk * 20
-        while shown < 3:
-            path, floor, result = simulate_one_path(
-                fastest_risk,
-                dynamic=True,
-                seed=seed,
-                return_result=True
-            )
-            if result == 'pass':
-                color = plt.cm.tab10(shown)
-                axs[3].plot(path, color=color, linewidth=2, alpha=0.9)
-                axs[3].plot(floor, color=color, linestyle='--', alpha=0.5)
-                shown += 1
-            seed += 1
-
-        axs[3].axhline(y=profit_target, color='green', linewidth=2)
-        axs[3].set_title(
-            f"4. FASTEST SAFE: Dynamic ${fastest_risk} Risk (halve in drawdown)"
-        )
-        axs[3].grid(True, alpha=0.3)
-        add_stats_box(axs[3], fastest_stats)
-
-        plt.tight_layout()
-        st.pyplot(fig)
+        # Charts section (kept as placeholder for now - can be expanded later)
+        st.subheader("Equity Curve Charts")
+        st.info("Full charts will be added in the next update.")
 
 else:
     st.info("👈 Adjust the settings in the sidebar and click **Run Simulation** to start.")
