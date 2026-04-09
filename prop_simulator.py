@@ -1,24 +1,22 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-import webbrowser
 import subprocess
+import webbrowser
 
 # ================== USER SETTINGS =================
 profit_target = 3000
 dd_limit = 2000
 win_rate = 0.6
 profit_factor = 1.6
-fixed_risk_amount = 250   # ← Change this freely
+fixed_risk_amount = 250   
 
-strategy_mode = "Mechanical"   # "Mechanical" or "Discretionary"
-be_trade_percent = 20           # Only used in Discretionary mode
+strategy_mode = "Mechanical"   
+be_trade_percent = 20           
 
 max_trades = 300
 num_sims = 2000
 
- # profit_factor here represents the average reward:risk multiple of a winning trade
-# e.g. 1.5 means risk $250 to make $375
 avg_loss_r = 1.0
 avg_win_r = profit_factor
 
@@ -37,34 +35,41 @@ if strategy_mode == "Discretionary":
     print(f"Breakeven Trades: {be_trade_percent}%")
 print(f"System Expectancy: {expected_r:.2f}R per trade")
 
-# ================== OPEN README LINK =================
-print("\n" + "="*60)
+# ================== README OPENING SECTION =================
+print("\n" + "="*70)
 print("📖  README & Documentation")
-print("="*60)
+print("="*70)
 
 readme_path = os.path.join(os.path.dirname(__file__), "README.md")
 
 if os.path.exists(readme_path):
-    # Try to open README in default browser or text editor
-    try:
-        if os.name == 'nt':  # Windows
-            os.startfile(readme_path)
-        elif os.name == 'posix':  # macOS and Linux
-            try:
-                subprocess.call(['open', readme_path])          # macOS
-            except:
+    print("Would you like to open the README.md file now?")
+    print("It contains important information about how the simulator works.")
+    user_input = input("Open README.md? (yes/no): ").strip().lower()
+    
+    if user_input in ['yes', 'y', '']:
+        try:
+            if os.name == 'nt':  # Windows
+                os.startfile(readme_path)
+            elif os.name == 'posix':  # macOS and Linux
                 try:
-                    subprocess.call(['xdg-open', readme_path])  # Linux
+                    subprocess.call(['open', readme_path])           # macOS
                 except:
-                    webbrowser.open('file://' + readme_path)
-        print("✅ README.md has been opened in your default viewer.")
-    except:
-        print(f"README.md is located at: {readme_path}")
+                    try:
+                        subprocess.call(['xdg-open', readme_path])   # Linux
+                    except:
+                        webbrowser.open('file://' + readme_path)
+            print("✅ README.md opened successfully.\n")
+        except Exception:
+            print(f"Could not open automatically.\nFile location: {readme_path}\n")
+    else:
+        print("Skipping README.\n")
 else:
-    print("README.md not found in the current folder.")
+    print("README.md not found in the current folder.\n")
 
-print("="*60 + "\n")
+print("="*70 + "\n")
 
+# ================== SIMULATION FUNCTIONS =================
 def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=False):
     rng = np.random.default_rng(seed)
 
@@ -73,50 +78,39 @@ def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=Fals
     equities = [equity]
     breach_floors = [-dd_limit]
 
-    # --- Streak state ---
-    current_state = "normal"   # one of: normal, hot, cold
+    current_state = "normal"   
     streak_remaining = 0
 
-    # --- Suggested default streak parameters ---
     no_trade_prob = 0.22
+    hot_start_prob = 0.04       
+    cold_start_prob = 0.08      
+    hot_shift = 0.18            
+    cold_shift = -0.22          
 
-    hot_start_prob = 0.04       # hot streaks are uncommon
-    cold_start_prob = 0.08      # cold streaks are more common than hot
-
-    hot_shift = 0.18            # +18% win rate during hot streaks
-    cold_shift = -0.22          # -22% win rate during cold streaks
-
-    # Geometric-style durations:
-    # average hot streak ≈ 4 trades, average cold streak ≈ 6 trades
     hot_continue_prob = 0.75
     cold_continue_prob = 0.83
 
     for _ in range(max_trades):
 
-        # Occasionally skip a trade entirely to simulate quiet sessions
         if rng.random() < no_trade_prob:
             equities.append(equity)
             breach_floors.append(peak - dd_limit)
             continue
 
-        # If not already in a streak, occasionally enter a new one.
         if streak_remaining <= 0:
             current_state = "normal"
-
             roll = rng.random()
             if roll < hot_start_prob:
                 current_state = "hot"
                 streak_remaining = 1
                 while rng.random() < hot_continue_prob:
                     streak_remaining += 1
-
             elif roll < hot_start_prob + cold_start_prob:
                 current_state = "cold"
                 streak_remaining = 1
                 while rng.random() < cold_continue_prob:
                     streak_remaining += 1
 
-        # Adjust the temporary win rate based on the current streak.
         if current_state == "hot":
             p_win = min(0.95, win_rate + hot_shift)
         elif current_state == "cold":
@@ -124,14 +118,11 @@ def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=Fals
         else:
             p_win = win_rate
 
-        # Use one trade from the current streak.
         if streak_remaining > 0:
             streak_remaining -= 1
             if streak_remaining == 0:
                 current_state = "normal"
 
-        # Mechanical mode: normal binary win/loss.
-        # Discretionary mode: some trades become breakeven scratches.
         if strategy_mode == "Discretionary" and rng.random() < (be_trade_percent / 100):
             pnl_r = 0.0
         else:
@@ -150,7 +141,6 @@ def simulate_one_path(risk_dollars, dynamic=False, seed=None, return_result=Fals
         equities.append(equity)
         breach_floors.append(peak - dd_limit)
 
-        # Trailing drawdown logic
         if equity < peak - dd_limit:
             for _ in range(5):
                 equities.append(equity)
