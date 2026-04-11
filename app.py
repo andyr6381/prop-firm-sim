@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import os
 import webbrowser
 
+import prop_simulator
 from prop_simulator import run_simulation, simulate_one_path
 
 st.set_page_config(page_title="Prop Firm Simulator", layout="wide")
@@ -87,6 +88,16 @@ if show_readme:
 # ================== REST OF YOUR APP ==================
 if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
     with st.spinner("Running thousands of simulations... This may take a few seconds"):
+        
+        # Sync Streamlit sidebar values into the simulator engine
+        prop_simulator.profit_target = profit_target
+        prop_simulator.dd_limit = dd_limit
+        prop_simulator.win_rate = win_rate
+        prop_simulator.profit_factor = profit_factor
+        prop_simulator.avg_win_r = profit_factor
+        prop_simulator.avg_loss_r = 1.0
+        prop_simulator.strategy_mode = strategy_mode
+        prop_simulator.be_trade_percent = be_trade_percent
         
         fixed_stats = run_simulation(
             fixed_risk_amount,

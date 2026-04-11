@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ================== USER SETTINGS =================
-profit_target = 3000
+profit_target = 8000
 dd_limit = 2000
 win_rate = 0.6
 profit_factor = 1.6
