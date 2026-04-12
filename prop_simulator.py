@@ -323,8 +323,13 @@ fastest_stats = None
 
 min_risk = max(50, int(dd_limit * 0.05))
 
-# Standard recommendation search remains conservative.
-max_risk = int(dd_limit * 0.25)
+ # Allow each style to search a different range of risk sizes.
+if trader_style == "Aggressive":
+    max_risk = int(dd_limit * 0.60)
+elif trader_style == "Conservative":
+    max_risk = int(dd_limit * 0.20)
+else:
+    max_risk = int(dd_limit * 0.35)
 
 # Allow the "Fastest Safe" route to test up to the full drawdown limit.
 # This means on a $2000 trailing DD account it can evaluate risk sizes up to $2000.
@@ -343,13 +348,33 @@ for risk in risk_sizes:
         f"Avg Trades {stats['avg_trades']}"
     )
 
-    # Prioritize higher pass rate, lower blow rate, but also penalize
-    # setups that require too many trades to finish.
-    score = (
-        stats['pass_rate'] * 2
-        - stats['blow_rate'] * 3
-        - stats['avg_trades'] * 0.5
-    )
+    # Style-specific scoring so each recommendation can choose
+    # a different risk size instead of all collapsing to the same value.
+    if trader_style == "Aggressive":
+        # Strongly favour speed. Accept lower pass rate if it passes the threshold.
+        score = (
+            stats['pass_rate'] * 1.0
+            - stats['blow_rate'] * 1.5
+            - stats['avg_trades'] * 2.5
+            + risk * 0.08
+        )
+
+    elif trader_style == "Conservative":
+        # Strongly favour survival and low blow-up probability.
+        score = (
+            stats['pass_rate'] * 3.0
+            - stats['blow_rate'] * 5.0
+            - stats['avg_trades'] * 0.25
+            - risk * 0.05
+        )
+
+    else:
+        # Balanced: middle ground between speed and safety.
+        score = (
+            stats['pass_rate'] * 2.0
+            - stats['blow_rate'] * 3.0
+            - stats['avg_trades'] * 1.0
+        )
 
     # Main recommendation now depends on the selected trader style.
     # Only consider risk sizes that meet the user's desired pass-rate threshold.
@@ -363,12 +388,13 @@ for risk in risk_sizes:
         recommended_dynamic = True
         recommended_stats = stats
 
-    # If no risk size satisfies the chosen style threshold,
-    # fall back to the highest pass-rate option available.
-    if risk <= max_risk and recommended_stats is None:
-        recommended_risk = risk
-        recommended_dynamic = True
-        recommended_stats = stats
+    # If nothing meets the style threshold, keep whichever setup has
+    # the highest pass rate within the allowed risk range.
+    if risk <= max_risk:
+        if recommended_stats is None or stats['pass_rate'] > recommended_stats['pass_rate']:
+            recommended_risk = risk
+            recommended_dynamic = True
+            recommended_stats = stats
 
     # Separate "fastest safe" recommendation.
     # First require the setup to still be reasonably safe.

@@ -275,36 +275,6 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
 
         st.dataframe(matrix_rows, use_container_width=True)
 
-        # Display Results
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.subheader("Fixed")
-            st.metric("Risk Size", f"${fixed_risk_amount}")
-            st.metric("Pass Rate", f"{fixed_stats['pass_rate']}%")
-            st.metric("Blow Rate", f"{fixed_stats['blow_rate']}%")
-            st.metric("Avg Trades", fixed_stats['avg_trades'])
-        
-        with col2:
-            st.subheader("Dynamic")
-            st.metric("Risk Size", f"${fixed_risk_amount}")
-            st.metric("Pass Rate", f"{dynamic_stats['pass_rate']}%")
-            st.metric("Blow Rate", f"{dynamic_stats['blow_rate']}%")
-            st.metric("Avg Trades", dynamic_stats['avg_trades'])
-        
-        with col3:
-            st.subheader(f"{trader_style} Recommended")
-            st.metric("Risk Size", f"${recommended_risk}")
-            st.metric("Pass Rate", f"{recommended_stats['pass_rate']}%")
-            st.metric("Blow Rate", f"{recommended_stats['blow_rate']}%")
-            st.metric("Avg Trades", recommended_stats['avg_trades'])
-
-        with col4:
-            st.subheader("Fastest Safe")
-            st.metric("Risk Size", f"${fastest_risk}")
-            st.metric("Pass Rate", f"{fastest_stats['pass_rate']}%")
-            st.metric("Blow Rate", f"{fastest_stats['blow_rate']}%")
-            st.metric("Avg Trades", fastest_stats['avg_trades'])
 
 
         # ================== CHARTS ==================
