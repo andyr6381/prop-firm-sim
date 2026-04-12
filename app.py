@@ -25,6 +25,18 @@ strategy_mode = st.sidebar.radio(
     index=0
 )
 
+# ===== Trader Style selector =====
+trader_style = st.sidebar.radio(
+    "Trader Style",
+    ["Aggressive", "Balanced", "Conservative"],
+    index=1,
+    help=(
+        "Aggressive = prioritize speed and accept lower pass probability.\n"
+        "Balanced = middle ground.\n"
+        "Conservative = prioritize account survival and 90%+ pass odds."
+    )
+)
+
 if strategy_mode == "Discretionary":
     be_trade_percent = st.sidebar.slider("Breakeven Trades (%)", 0, 50, 20)
 else:
@@ -98,6 +110,7 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
         prop_simulator.avg_loss_r = 1.0
         prop_simulator.strategy_mode = strategy_mode
         prop_simulator.be_trade_percent = be_trade_percent
+        prop_simulator.trader_style = trader_style
         
         fixed_stats = run_simulation(
             fixed_risk_amount,
@@ -112,7 +125,22 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
             consistency_cap=consistency_cap_amount
         )
         
-        # Recommendation logic (simplified)
+        # Recommendation logic based on selected trader style
+        if trader_style == "Aggressive":
+            min_required_pass_rate = 50
+            style_description = "Prioritizes speed and accepts higher risk"
+        elif trader_style == "Conservative":
+            min_required_pass_rate = 90
+            style_description = "Prioritizes account survival and high pass probability"
+        else:
+            min_required_pass_rate = 75
+            style_description = "Balanced between speed and safety"
+
+        st.info(
+            f"Trader Style: {trader_style} — {style_description}. "
+            f"Target minimum pass rate: {min_required_pass_rate}%"
+        )
+
         best_score = -999
         recommended_risk = 200
         recommended_stats = None
@@ -122,15 +150,11 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
         fastest_stats = None
 
         min_risk = max(50, int(dd_limit * 0.05))
-
-        # Conservative cap for the "Safest" recommendation
         max_risk = int(dd_limit * 0.25)
-
-        # Allow the "Fastest Safe" route to evaluate all the way up to
-        # the full trailing drawdown limit.
         fastest_max_risk = int(dd_limit)
-
         risk_step = 25
+
+        best_fallback_pass = -1
 
         for risk in range(min_risk, fastest_max_risk + risk_step, risk_step):
             stats = run_simulation(
@@ -146,12 +170,25 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
                 - stats['avg_trades'] * 0.5
             )
 
-            # Keep the main recommendation conservative.
-            if risk <= max_risk and score > best_score:
+            # Main recommendation depends on the selected trader style.
+            if (
+                risk <= max_risk
+                and stats['pass_rate'] >= min_required_pass_rate
+                and score > best_score
+            ):
                 best_score = score
                 recommended_risk = risk
                 recommended_stats = stats
 
+            # Fallback: if nothing meets the chosen threshold, use the highest pass-rate option.
+            if risk <= max_risk and stats['pass_rate'] > best_fallback_pass:
+                best_fallback_pass = stats['pass_rate']
+
+                if recommended_stats is None:
+                    recommended_risk = risk
+                    recommended_stats = stats
+
+            # Fastest safe recommendation remains separate.
             if stats['pass_rate'] >= 60 and stats['blow_rate'] <= 40:
                 fast_score = -stats['avg_trades']
                 fast_score += stats['pass_rate'] * 0.1
@@ -187,7 +224,7 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
             st.metric("Avg Trades", dynamic_stats['avg_trades'])
         
         with col3:
-            st.subheader("Safest")
+            st.subheader(f"{trader_style}")
             st.metric("Risk Size", f"${recommended_risk}")
             st.metric("Pass Rate", f"{recommended_stats['pass_rate']}%")
             st.metric("Blow Rate", f"{recommended_stats['blow_rate']}%")
@@ -344,7 +381,7 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
 
         axs[2].axhline(y=profit_target, color='green', linewidth=2)
         axs[2].set_title(
-            f"3. SAFEST: Dynamic ${recommended_risk} Risk",
+            f"3. {trader_style.upper()}: Dynamic ${recommended_risk} Risk",
             fontsize=13,
             fontweight='bold',
             pad=28

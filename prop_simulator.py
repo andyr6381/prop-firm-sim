@@ -12,6 +12,8 @@ consistency_limit_percent = 20   # 0 disables. Example: 20 = max 20% of target p
 strategy_mode = "Mechanical"   # "Mechanical" or "Discretionary"
 be_trade_percent = 20           # Only used in Discretionary mode
 
+trader_style = "Balanced"   # "Aggressive", "Balanced", "Conservative"
+
 max_trades = 300
 num_sims = 2000
 
@@ -294,6 +296,21 @@ def run_simulation(
 print("Finding optimal risk...\n")
 print(f"Testing risk sizes from ${min_risk if 'min_risk' in locals() else int(dd_limit * 0.05)} to ${int(dd_limit * 0.25)} in $25 increments")
 
+# ================== TRADER STYLE TARGETS ==================
+if trader_style == "Aggressive":
+    min_required_pass_rate = 50
+    style_description = "Optimize for speed and accept higher failure risk"
+elif trader_style == "Conservative":
+    min_required_pass_rate = 90
+    style_description = "Prioritize account survival and high pass probability"
+else:
+    min_required_pass_rate = 75
+    style_description = "Balanced between speed and safety"
+
+print(f"Trader Style: {trader_style}")
+print(f"Target Minimum Pass Rate: {min_required_pass_rate}%")
+print(f"Style Logic: {style_description}\n")
+
 best_score = -999
 recommended_risk = 200
 recommended_dynamic = True
@@ -334,10 +351,21 @@ for risk in risk_sizes:
         - stats['avg_trades'] * 0.5
     )
 
-    # Keep the main recommendation conservative by only considering
-    # risk sizes up to the original 25% of drawdown limit.
-    if risk <= max_risk and score > best_score:
+    # Main recommendation now depends on the selected trader style.
+    # Only consider risk sizes that meet the user's desired pass-rate threshold.
+    if (
+        risk <= max_risk
+        and stats['pass_rate'] >= min_required_pass_rate
+        and score > best_score
+    ):
         best_score = score
+        recommended_risk = risk
+        recommended_dynamic = True
+        recommended_stats = stats
+
+    # If no risk size satisfies the chosen style threshold,
+    # fall back to the highest pass-rate option available.
+    if risk <= max_risk and recommended_stats is None:
         recommended_risk = risk
         recommended_dynamic = True
         recommended_stats = stats
@@ -373,6 +401,7 @@ if fastest_stats['pass_rate'] == 0:
 half_risk = recommended_risk // 2
 
 print("=== RECOMMENDATION ===")
+print(f"Trader Style: {trader_style}")
 print(f"Best: Dynamic ${recommended_risk} → halve to ${half_risk} when in drawdown")
 print(
     f"Pass Rate: {recommended_stats['pass_rate']}% | "
