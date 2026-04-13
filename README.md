@@ -287,3 +287,346 @@ For the Streamlit version:
 ```bash
 streamlit run app.py
 ```
+# Prop Firm Challenge Monte Carlo Simulator
+
+A Monte Carlo simulator for modelling Apex-style prop firm evaluation accounts with a trailing drawdown.
+
+The project consists of:
+
+- `prop_simulator.py` → core simulation engine
+- `app.py` → Streamlit UI and recommendation dashboard
+
+The simulator is designed to answer two different questions:
+
+1. "What happens if I trade my current plan?"
+2. "Given my goals and risk tolerance, what is the best way to size the account?"
+
+---
+
+# Project Structure
+
+## `prop_simulator.py`
+
+Contains all simulation logic:
+
+- Trailing drawdown tracking
+- Fixed and dynamic risk sizing
+- Hot / cold streak modelling
+- Mechanical vs discretionary trade behaviour
+- Monte Carlo pass / fail simulation
+- Recommendation engine for different trader styles
+
+## `app.py`
+
+Contains the Streamlit UI:
+
+- Sidebar controls
+- Recommendation matrix
+- 2x2 chart layout
+- README/help viewer
+- Risk style selector
+- Result table and chart rendering
+
+`app.py` imports and uses:
+
+```python
+from prop_simulator import run_simulation, simulate_one_path
+```
+
+The Streamlit app updates the global settings inside `prop_simulator.py` before every simulation run.
+
+---
+
+# Account Model
+
+The simulator currently models a typical Apex-style 50k evaluation account:
+
+- Profit Target: `$3,000`
+- Trailing Drawdown Limit: `$2,000`
+- Dynamic trailing floor that moves higher whenever a new equity high is reached
+
+A simulation ends when either:
+
+- Equity reaches the profit target → PASS
+- Equity falls below the trailing drawdown floor → FAIL
+- Maximum trades reached without hitting either outcome
+
+---
+
+# Core Inputs
+
+The following settings are configurable from the Streamlit sidebar or directly in `prop_simulator.py`:
+
+```python
+profit_target = 3000
+dd_limit = 2000
+win_rate = 0.60
+profit_factor = 1.6
+fixed_risk_amount = 250
+strategy_mode = "Mechanical"
+be_trade_percent = 20
+trader_style = "Balanced"
+```
+
+## Variable Definitions
+
+- `profit_target` → challenge profit target
+- `dd_limit` → trailing drawdown distance
+- `win_rate` → base win probability before streak adjustments
+- `profit_factor` → reward:risk multiple of a winning trade
+- `fixed_risk_amount` → user's own risk per trade for charts 1 and 2
+- `strategy_mode` → `Mechanical` or `Discretionary`
+- `be_trade_percent` → percentage of trades that become breakeven in discretionary mode
+- `trader_style` → selected recommendation profile (`Aggressive`, `Balanced`, `Conservative`)
+
+Example:
+
+- Risk = `$250`
+- Profit Factor = `1.6`
+- Winning trade = `+$400`
+- Losing trade = `-$250`
+
+---
+
+# Trading Modes Shown In The App
+
+The simulator always shows four approaches:
+
+## 1. Your Fixed Risk
+
+Uses the user's chosen fixed risk amount on every trade.
+
+Example:
+
+- Risk `$250` every trade
+
+## 2. Your Dynamic Risk
+
+Uses the user's chosen risk while at a new equity high.
+
+If the account drops below the previous peak, risk is automatically cut in half.
+
+Example:
+
+- Risk `$250` at highs
+- Risk `$125` while in drawdown
+
+## 3. Recommended Style
+
+Chart 3 changes depending on the selected Recommendation Style in Streamlit:
+
+- Aggressive Recommended
+- Balanced Recommended
+- Conservative Recommended
+
+The recommended risk size is generated automatically and is independent from the user's own fixed risk amount.
+
+## 4. Fastest Safe
+
+Searches across a wider range of risk sizes and finds the fastest way to pass while still maintaining acceptable odds.
+
+---
+
+# Recommendation Styles
+
+The simulator includes three recommendation profiles.
+
+These profiles only affect the recommended sizing engine — they do NOT change the user's own Fixed / Dynamic charts.
+
+| Style | Target Pass Rate | Typical Risk Range | Behaviour |
+|---|---:|---:|---|
+| Aggressive | 50–75% | ~35–60% of DD | Prioritises speed and accepts higher blow-up risk |
+| Balanced | 75–90% | ~20–35% of DD | Middle ground between speed and safety |
+| Conservative | 90–100% | ~10–20% of DD | Prioritises survival and lowest blow-up probability |
+
+For a `$2,000` trailing drawdown account, typical recommendation ranges are:
+
+- Aggressive ≈ `$700–1200`
+- Balanced ≈ `$400–700`
+- Conservative ≈ `$200–400`
+
+The recommendation matrix in the app compares:
+
+- Your Fixed Risk
+- Your Dynamic Risk
+- Aggressive Recommended
+- Balanced Recommended
+- Conservative Recommended
+- Fastest Safe
+
+---
+
+# Mechanical vs Discretionary Mode
+
+## Mechanical Mode
+
+Every trade is either:
+
+- Full winner = `profit_factor × risk`
+- Full loser = `-1 × risk`
+
+Example:
+
+- Win Rate = `60%`
+- Profit Factor = `1.6`
+- Risk = `$250`
+
+Then:
+
+- Win = `+$400`
+- Loss = `-$250`
+
+Mechanical mode still includes:
+
+- Hot streaks
+- Cold streaks
+- No-trade periods
+
+The only difference is that every executed trade resolves as a full win or full loss.
+
+## Discretionary Mode
+
+Discretionary mode allows a percentage of trades to become breakeven scratches.
+
+Example:
+
+```python
+be_trade_percent = 20
+```
+
+Means approximately 20% of trades produce `0R` instead of a win or loss.
+
+This better reflects:
+
+- Partial exits
+- Breakeven management
+- Manual trade management
+- Runner-based systems
+
+---
+
+# Streak Model
+
+The simulator does NOT assume every trade is independent.
+
+Instead it models realistic clusters of wins and losses.
+
+## Hot Streaks
+
+Occasionally performance temporarily improves.
+
+Default behaviour:
+
+- ~4% chance to start
+- Win rate increases by about `+18%`
+- Average length ≈ 4 trades
+
+## Cold Streaks
+
+Cold streaks are more common than hot streaks.
+
+Default behaviour:
+
+- ~8% chance to start
+- Win rate decreases by about `-22%`
+- Average length ≈ 6 trades
+
+## No-Trade Periods
+
+The simulator also includes quiet periods with no valid setup.
+
+Default:
+
+- ~22% chance of a no-trade step
+
+This creates more realistic equity curves and more realistic time-to-pass estimates.
+
+---
+
+# Trailing Drawdown Logic
+
+Trailing drawdown is tracked exactly as in the prop challenge:
+
+```text
+trailing_floor = highest_equity - dd_limit
+```
+
+The floor only moves higher when equity makes a new high.
+
+Example:
+
+| Equity Peak | Trailing Floor |
+|---|---:|
+| $0 | -$2,000 |
+| $500 | -$1,500 |
+| $1,500 | -$500 |
+| $3,000 | +$1,000 |
+
+The dashed line shown on every chart is this trailing drawdown floor.
+
+---
+
+# Recommendation Engine Logic
+
+The recommendation engine tests many different risk sizes.
+
+Typical search ranges:
+
+- Conservative → 10–20% of DD
+- Balanced → 20–35% of DD
+- Aggressive → 35–60% of DD
+- Fastest Safe → up to 100% of DD
+
+Each style uses a different scoring function:
+
+- Conservative heavily rewards pass rate and punishes blow-up risk
+- Balanced rewards pass rate while also reducing average trades
+- Aggressive strongly rewards fewer trades and larger risk sizes
+- Fastest Safe simply finds the quickest acceptable route to pass
+
+---
+
+# Streamlit Features
+
+The Streamlit app currently includes:
+
+- Sidebar controls for all parameters
+- Recommendation Style selector
+- Mechanical vs Discretionary selector
+- Optional breakeven percentage
+- Recommendation Matrix table
+- Four charts in a 2x2 layout
+- Example equity curves and trailing floors
+- README / Help checkbox in the sidebar
+
+---
+
+# Running The Project
+
+## Python Script
+
+```bash
+python prop_simulator.py
+```
+
+## Streamlit App
+
+```bash
+streamlit run app.py
+```
+
+---
+
+# Future Enhancements Planned
+
+Potential next improvements:
+
+- Target number of days to pass
+- Trades per day modelling
+- CSV trade-history upload
+- Auto-calculation of true win rate / BE % / profit factor
+- Risk-of-ruin diagnostics
+- Consecutive losing streak probabilities
+- Histogram of trades needed to pass
+- Psychological difficulty / stress score
+- Saved trader profiles
