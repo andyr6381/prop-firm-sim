@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 
-Outcome = Literal["pass", "breach", "timeout"]
-TraderStyle = Literal["Aggressive", "Balanced", "Conservative"]
-StrategyMode = Literal["Mechanical", "Discretionary"]
+Outcome = str
+TraderStyle = str
+StrategyMode = str
 
 
 @dataclass(frozen=True)
