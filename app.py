@@ -1,40 +1,37 @@
-import streamlit as st
-import numpy as np
-import matplotlib.pyplot as plt
 import os
-import webbrowser
 
-import prop_simulator
-from prop_simulator import run_simulation, simulate_one_path
+import matplotlib.pyplot as plt
+import streamlit as st
+
+from prop_simulator import (
+    STYLE_DESCRIPTIONS,
+    SimulationConfig,
+    build_simulation_report,
+    calculate_expectancy,
+    sample_paths,
+)
 
 st.set_page_config(page_title="Prop Firm Simulator", layout="wide")
-st.title("🚀 Prop Firm Challenge Monte Carlo Simulator")
-st.markdown("### Test your edge with Fixed vs Dynamic risk + Smart Recommendations")
+st.title("Prop Firm Challenge Monte Carlo Simulator")
+st.markdown(
+    "### Test your edge with fixed risk, dynamic risk, and style-based recommendations"
+)
 
-# ================== SIDEBAR INPUTS ==================
 st.sidebar.header("Simulation Parameters")
 
 profit_target = st.sidebar.number_input("Profit Target ($)", value=3000, step=100)
 dd_limit = st.sidebar.number_input("Trailing Drawdown Limit ($)", value=2000, step=100)
 win_rate = st.sidebar.slider("Win Rate (%)", 40, 90, 60) / 100.0
 profit_factor = st.sidebar.slider("Reward : Risk Multiple", 1.0, 3.0, 1.6, 0.1)
-
-strategy_mode = st.sidebar.radio(
-    "System Type",
-    ["Mechanical", "Discretionary"],
-    index=0
-)
-
-# ===== Trader Style selector =====
+strategy_mode = st.sidebar.radio("System Type", ["Mechanical", "Discretionary"], index=0)
 trader_style = st.sidebar.radio(
     "Recommendation Style",
     ["Aggressive", "Balanced", "Conservative"],
     index=1,
     help=(
-        "Aggressive = prioritize speed and accept lower pass probability.\n"
-        "Balanced = middle ground.\n"
-        "Conservative = prioritize account survival and 90%+ pass odds."
-    )
+        "Aggressive prioritizes speed, Balanced is the middle ground, "
+        "and Conservative prioritizes survival."
+    ),
 )
 
 if strategy_mode == "Discretionary":
@@ -43,494 +40,176 @@ else:
     be_trade_percent = 0
 
 fixed_risk_amount = st.sidebar.number_input("Fixed Risk Amount ($)", value=250, step=25)
-
 consistency_limit_percent = st.sidebar.slider(
     "Consistency Rule (% of Profit Target)",
     min_value=0,
     max_value=100,
     value=0,
     step=5,
-    help="0 disables the rule. Example: 20 means no single winning trade can contribute more than 20% of the profit target."
+    help=(
+        "0 disables the rule. Example: 20 means no single winning trade "
+        "can contribute more than 20% of the profit target."
+    ),
 )
-
-consistency_cap_amount = (
-    profit_target * (consistency_limit_percent / 100)
-    if consistency_limit_percent > 0
-    else None
-)
-
 num_sims = st.sidebar.slider("Number of Simulations", 1000, 10000, 3000, step=500)
 
-# Calculate expectancy
-avg_loss_r = 1.0
-avg_win_r = profit_factor
+config = SimulationConfig(
+    profit_target=float(profit_target),
+    dd_limit=float(dd_limit),
+    win_rate=win_rate,
+    profit_factor=profit_factor,
+    strategy_mode=strategy_mode,
+    be_trade_percent=float(be_trade_percent),
+    consistency_limit_percent=float(consistency_limit_percent),
+    num_sims=int(num_sims),
+    trader_style=trader_style,
+)
 
-if strategy_mode == "Mechanical":
-    expected_r = (win_rate * avg_win_r) - ((1 - win_rate) * avg_loss_r)
-else:
-    effective_trade_rate = 1 - (be_trade_percent / 100)
-    expected_r = effective_trade_rate * (
-        (win_rate * avg_win_r) - ((1 - win_rate) * avg_loss_r)
-    )
+st.sidebar.metric("System Expectancy", f"{calculate_expectancy(config):.2f}R per trade")
 
-st.sidebar.metric("System Expectancy", f"{expected_r:.2f}R per trade")
-
-# ================== README / HELP ==================
 st.sidebar.markdown("---")
 st.sidebar.subheader("Documentation")
-
-show_readme = st.sidebar.checkbox("📖 Show README")
-
+show_readme = st.sidebar.checkbox("Show README")
 
 if show_readme:
     st.markdown("# README / Help")
-
     readme_path = os.path.join(os.path.dirname(__file__), "README.md")
-
     if os.path.exists(readme_path):
-        with open(readme_path, "r", encoding="utf-8") as f:
-            readme_text = f.read()
-
-        st.markdown(readme_text)
+        with open(readme_path, "r", encoding="utf-8") as readme_file:
+            st.markdown(readme_file.read())
     else:
         st.error("README.md file not found in the app folder.")
-
     st.stop()
 
-# ================== REST OF YOUR APP ==================
-if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
-    with st.spinner("Running thousands of simulations... This may take a few seconds"):
-        
-        # Sync Streamlit sidebar values into the simulator engine
-        prop_simulator.profit_target = profit_target
-        prop_simulator.dd_limit = dd_limit
-        prop_simulator.win_rate = win_rate
-        prop_simulator.profit_factor = profit_factor
-        prop_simulator.avg_win_r = profit_factor
-        prop_simulator.avg_loss_r = 1.0
-        prop_simulator.strategy_mode = strategy_mode
-        prop_simulator.be_trade_percent = be_trade_percent
-        prop_simulator.trader_style = trader_style
-        
-        fixed_stats = run_simulation(
-            fixed_risk_amount,
-            dynamic=False,
-            num_sims=num_sims,
-            consistency_cap=consistency_cap_amount
-        )
-        dynamic_stats = run_simulation(
-            fixed_risk_amount,
-            dynamic=True,
-            num_sims=num_sims,
-            consistency_cap=consistency_cap_amount
-        )
-        
-        def get_style_recommendation(style_name):
-            # Different styles should search different risk ranges and use
-            # different scoring so the recommendations do not all collapse
-            # to the same low-risk value.
-            if style_name == "Aggressive":
-                min_required_pass_rate = 50
-                style_min_risk = max(50, int(dd_limit * 0.35))
-                style_max_risk = int(dd_limit * 0.60)
 
-            elif style_name == "Conservative":
-                min_required_pass_rate = 90
-                style_min_risk = max(50, int(dd_limit * 0.10))
-                style_max_risk = int(dd_limit * 0.20)
+def format_optional(value):
+    return "N/A" if value is None else value
 
-            else:  # Balanced
-                min_required_pass_rate = 75
-                style_min_risk = max(50, int(dd_limit * 0.20))
-                style_max_risk = int(dd_limit * 0.35)
 
-            best_score = -999999
-            best_risk = None
-            best_stats = None
-
-            fallback_risk = None
-            fallback_stats = None
-            fallback_pass = -1
-
-            for risk in range(style_min_risk, style_max_risk + risk_step, risk_step):
-                stats = run_simulation(
-                    risk,
-                    dynamic=True,
-                    num_sims=2000,
-                    consistency_cap=consistency_cap_amount
-                )
-
-                # Keep track of the highest pass-rate setup in case nothing
-                # satisfies the desired style threshold.
-                if stats['pass_rate'] > fallback_pass:
-                    fallback_pass = stats['pass_rate']
-                    fallback_risk = risk
-                    fallback_stats = stats
-
-                if stats['pass_rate'] < min_required_pass_rate:
-                    continue
-
-                if style_name == "Aggressive":
-                    # Prioritize speed and accept materially higher risk.
-                    score = (
-                        stats['pass_rate'] * 1.0
-                        - stats['blow_rate'] * 1.0
-                        - stats['avg_trades'] * 2.5
-                        + risk * 0.08
-                    )
-
-                elif style_name == "Conservative":
-                    # Prioritize survival and penalize larger size.
-                    score = (
-                        stats['pass_rate'] * 3.0
-                        - stats['blow_rate'] * 5.0
-                        - stats['avg_trades'] * 0.25
-                        - risk * 0.05
-                    )
-
-                else:  # Balanced
-                    # Middle ground between pass rate and speed.
-                    score = (
-                        stats['pass_rate'] * 2.0
-                        - stats['blow_rate'] * 3.0
-                        - stats['avg_trades'] * 1.0
-                    )
-
-                if score > best_score:
-                    best_score = score
-                    best_risk = risk
-                    best_stats = stats
-
-            # Fall back to the highest pass-rate setup if nothing meets the threshold.
-            if best_stats is None:
-                return fallback_risk, fallback_stats
-
-            return best_risk, best_stats
-
-        # Recommendation logic based on selected recommendation style
-        min_risk = max(50, int(dd_limit * 0.05))
-        max_risk = int(dd_limit * 0.25)
-        fastest_max_risk = int(dd_limit)
-        risk_step = 25
-
-        aggressive_risk, aggressive_stats = get_style_recommendation("Aggressive")
-        balanced_risk, balanced_stats = get_style_recommendation("Balanced")
-        conservative_risk, conservative_stats = get_style_recommendation("Conservative")
-
-        if trader_style == "Aggressive":
-            recommended_risk = aggressive_risk
-            recommended_stats = aggressive_stats
-            style_description = "Prioritizes speed and accepts lower pass probability"
-        elif trader_style == "Conservative":
-            recommended_risk = conservative_risk
-            recommended_stats = conservative_stats
-            style_description = "Prioritizes survival and 90%+ pass probability"
-        else:
-            recommended_risk = balanced_risk
-            recommended_stats = balanced_stats
-            style_description = "Balanced between speed and account protection"
-
-        st.info(
-            f"Recommendation Style: {trader_style} — {style_description}. "
-            f"Chart 3 shows this recommendation."
-        )
-
-        # Fallback if no recommendation meets the criteria
-        if recommended_stats is None:
-            recommended_risk = fixed_risk_amount
-            recommended_stats = dynamic_stats
-
-        # Fastest safe recommendation
-        fastest_score = -999
-        fastest_risk = fixed_risk_amount
-        fastest_stats = dynamic_stats
-
-        for risk in range(min_risk, fastest_max_risk + risk_step, risk_step):
-            stats = run_simulation(
-                risk,
-                dynamic=True,
-                num_sims=2000,
-                consistency_cap=consistency_cap_amount
-            )
-
-            if stats['pass_rate'] >= 60 and stats['blow_rate'] <= 40:
-                fast_score = (
-                    -stats['avg_trades']
-                    + stats['pass_rate'] * 0.1
-                    - stats['blow_rate'] * 0.05
-                )
-
-                if fast_score > fastest_score:
-                    fastest_score = fast_score
-                    fastest_risk = risk
-                    fastest_stats = stats
-
-        st.markdown("### Recommendation Matrix")
-
-        matrix_rows = [
-            {
-                "Plan": f"Your Fixed ${fixed_risk_amount}",
-                "Risk": f"${fixed_risk_amount}",
-                "Pass %": fixed_stats['pass_rate'],
-                "Blow %": fixed_stats['blow_rate'],
-                "Avg Trades": fixed_stats['avg_trades']
-            },
-            {
-                "Plan": f"Your Dynamic ${fixed_risk_amount}",
-                "Risk": f"${fixed_risk_amount}",
-                "Pass %": dynamic_stats['pass_rate'],
-                "Blow %": dynamic_stats['blow_rate'],
-                "Avg Trades": dynamic_stats['avg_trades']
-            }
+def add_stats_box(ax, risk_dollars, summary):
+    text = "\n".join(
+        [
+            f"Risk: ${risk_dollars}",
+            f"Pass: {summary.pass_rate}%",
+            f"Breach: {summary.breach_rate}%",
+            f"Timeout: {summary.timeout_rate}%",
+            f"Avg Pass Steps: {format_optional(summary.avg_steps_to_pass)}",
+            f"Avg Pass Trades: {format_optional(summary.avg_trades_to_pass)}",
         ]
-
-        if aggressive_stats is not None:
-            matrix_rows.append({
-                "Plan": "Aggressive Recommended",
-                "Risk": f"${aggressive_risk}",
-                "Pass %": aggressive_stats['pass_rate'],
-                "Blow %": aggressive_stats['blow_rate'],
-                "Avg Trades": aggressive_stats['avg_trades']
-            })
-
-        if balanced_stats is not None:
-            matrix_rows.append({
-                "Plan": "Balanced Recommended",
-                "Risk": f"${balanced_risk}",
-                "Pass %": balanced_stats['pass_rate'],
-                "Blow %": balanced_stats['blow_rate'],
-                "Avg Trades": balanced_stats['avg_trades']
-            })
-
-        if conservative_stats is not None:
-            matrix_rows.append({
-                "Plan": "Conservative Recommended",
-                "Risk": f"${conservative_risk}",
-                "Pass %": conservative_stats['pass_rate'],
-                "Blow %": conservative_stats['blow_rate'],
-                "Avg Trades": conservative_stats['avg_trades']
-            })
-
-        matrix_rows.append({
-            "Plan": "Fastest Safe",
-            "Risk": f"${fastest_risk}",
-            "Pass %": fastest_stats['pass_rate'],
-            "Blow %": fastest_stats['blow_rate'],
-            "Avg Trades": fastest_stats['avg_trades']
-        })
-
-        st.dataframe(matrix_rows, use_container_width=True)
+    )
+    ax.text(
+        0.98,
+        0.02,
+        text,
+        transform=ax.transAxes,
+        fontsize=9,
+        verticalalignment="bottom",
+        horizontalalignment="right",
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="white", edgecolor="black", alpha=0.9),
+    )
 
 
+def plot_plan(ax, title, subtitle, config_value, recommendation, preferred_outcome, seed):
+    paths = sample_paths(
+        config=config_value,
+        risk_dollars=recommendation.risk_dollars,
+        dynamic=recommendation.dynamic,
+        count=3,
+        preferred_outcome=preferred_outcome,
+        start_seed=seed,
+    )
 
-        # ================== CHARTS ==================
-        fig, axs = plt.subplots(2, 2, figsize=(16, 12))
-        axs = axs.flatten()
+    for index, path in enumerate(paths):
+        color = plt.cm.tab10(index)
+        label = f"{path.outcome.title()} Path {index + 1}"
+        ax.plot(path.equities, color=color, linewidth=2, label=label)
+        ax.plot(path.trailing_floors, color=color, linestyle="--", alpha=0.5)
 
-        consistency_suffix = (
-            f"Consistency Cap: ${consistency_cap_amount:.0f} ({consistency_limit_percent}%)"
-            if consistency_cap_amount is not None
-            else "No Consistency Cap"
-        )
+    ax.axhline(y=config_value.profit_target, color="green", linewidth=2, label="Pass Target")
+    ax.set_title(title, fontsize=13, fontweight="bold", pad=28)
+    ax.text(
+        0.5,
+        1.01,
+        subtitle,
+        transform=ax.transAxes,
+        ha="center",
+        va="bottom",
+        fontsize=10,
+    )
+    ax.set_xlabel("Simulation Steps")
+    ax.set_ylabel("Profit / Loss ($)")
+    ax.grid(True, alpha=0.3)
+    add_stats_box(ax, recommendation.risk_dollars, recommendation.summary)
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend(loc="upper left")
 
-        def add_stats_box(ax, risk, stats):
-            text = (
-                f"Risk: ${risk}\n"
-                f"Pass Rate: {stats['pass_rate']}%\n"
-                f"Blow Rate: {stats['blow_rate']}%\n"
-                f"Avg Trades: {stats['avg_trades']}"
-            )
-            ax.text(
-                0.98,
-                0.02,
-                text,
-                transform=ax.transAxes,
-                fontsize=9,
-                verticalalignment='bottom',
-                horizontalalignment='right',
-                bbox=dict(
-                    boxstyle="round,pad=0.5",
-                    facecolor='white',
-                    edgecolor='black',
-                    alpha=0.9
-                )
-            )
 
-        # 1. Fixed
-        shown = 0
-        seed = 100
-        while shown < 3:
-            path, floor, result = simulate_one_path(
-                fixed_risk_amount,
-                dynamic=False,
-                seed=seed,
-                consistency_cap=consistency_cap_amount,
-                return_result=True
-            )
+if st.button("Run Simulation", type="primary", use_container_width=True):
+    with st.spinner("Running simulations..."):
+        report = build_simulation_report(config=config, fixed_risk_amount=int(fixed_risk_amount))
 
-            if fixed_stats['pass_rate'] > 50:
-                should_show = result == 'pass'
-            else:
-                should_show = True
+    st.info(
+        f"Recommendation Style: {config.trader_style} — "
+        f"{STYLE_DESCRIPTIONS[config.trader_style]}"
+    )
 
-            if should_show:
-                color = plt.cm.tab10(shown)
-                axs[0].plot(path, color=color, linewidth=2)
-                axs[0].plot(floor, color=color, linestyle='--', alpha=0.5)
-                shown += 1
+    consistency_suffix = (
+        f"Consistency Cap: ${config.consistency_cap_amount:.0f} ({int(config.consistency_limit_percent)}%)"
+        if config.consistency_cap_amount is not None
+        else "No Consistency Cap"
+    )
 
-            seed += 1
+    st.markdown("### Recommendation Matrix")
+    st.dataframe(report.matrix_rows, use_container_width=True)
 
-        axs[0].axhline(y=profit_target, color='green', linewidth=2)
-        axs[0].set_title(
-            f"1. FIXED ${fixed_risk_amount} Risk",
-            fontsize=13,
-            fontweight='bold',
-            pad=28
-        )
-        axs[0].text(
-            0.5,
-            1.01,
-            f"Your Current Style\n{consistency_suffix}",
-            transform=axs[0].transAxes,
-            ha='center',
-            va='bottom',
-            fontsize=10
-        )
-        axs[0].grid(True, alpha=0.3)
-        add_stats_box(axs[0], fixed_risk_amount, fixed_stats)
+    fig, axs = plt.subplots(2, 2, figsize=(16, 12))
+    axs = axs.flatten()
 
-        # 2. Dynamic
-        shown = 0
-        seed = 200
-        while shown < 3:
-            path, floor, result = simulate_one_path(
-                fixed_risk_amount,
-                dynamic=True,
-                seed=seed,
-                consistency_cap=consistency_cap_amount,
-                return_result=True
-            )
+    plot_plan(
+        axs[0],
+        f"1. FIXED ${report.fixed.risk_dollars} Risk",
+        f"Your Current Style\n{consistency_suffix}",
+        config,
+        report.fixed,
+        preferred_outcome=None,
+        seed=100,
+    )
+    plot_plan(
+        axs[1],
+        f"2. DYNAMIC ${report.dynamic.risk_dollars} Risk",
+        f"Rule: Halve Risk in Drawdown\n{consistency_suffix}",
+        config,
+        report.dynamic,
+        preferred_outcome=None,
+        seed=200,
+    )
+    plot_plan(
+        axs[2],
+        f"3. {config.trader_style.upper()} RECOMMENDED: Dynamic ${report.selected.risk_dollars} Risk",
+        f"{report.selected.rationale}\n{consistency_suffix}",
+        config,
+        report.selected,
+        preferred_outcome="pass",
+        seed=report.selected.risk_dollars * 10,
+    )
+    plot_plan(
+        axs[3],
+        f"4. FASTEST SAFE: Dynamic ${report.fastest_safe.risk_dollars} Risk",
+        f"{report.fastest_safe.rationale}\n{consistency_suffix}",
+        config,
+        report.fastest_safe,
+        preferred_outcome="pass",
+        seed=report.fastest_safe.risk_dollars * 20,
+    )
 
-            if dynamic_stats['pass_rate'] > 50:
-                should_show = result == 'pass'
-            else:
-                should_show = True
-
-            if should_show:
-                color = plt.cm.tab10(shown)
-                axs[1].plot(path, color=color, linewidth=2)
-                axs[1].plot(floor, color=color, linestyle='--', alpha=0.5)
-                shown += 1
-
-            seed += 1
-
-        axs[1].axhline(y=profit_target, color='green', linewidth=2)
-        axs[1].set_title(
-            f"2. DYNAMIC ${fixed_risk_amount} Risk",
-            fontsize=13,
-            fontweight='bold',
-            pad=28
-        )
-        axs[1].text(
-            0.5,
-            1.01,
-            f"Rule: Halve Risk in Drawdown\n{consistency_suffix}",
-            transform=axs[1].transAxes,
-            ha='center',
-            va='bottom',
-            fontsize=10
-        )
-        axs[1].grid(True, alpha=0.3)
-        add_stats_box(axs[1], fixed_risk_amount, dynamic_stats)
-
-        # 3. Safest
-        shown = 0
-        seed = recommended_risk * 10
-        while shown < 3:
-            path, floor, result = simulate_one_path(
-                recommended_risk,
-                dynamic=True,
-                seed=seed,
-                consistency_cap=consistency_cap_amount,
-                return_result=True
-            )
-
-            if result == 'pass':
-                color = plt.cm.tab10(shown)
-                axs[2].plot(path, color=color, linewidth=2)
-                axs[2].plot(floor, color=color, linestyle='--', alpha=0.5)
-                shown += 1
-
-            seed += 1
-
-        axs[2].axhline(y=profit_target, color='green', linewidth=2)
-        axs[2].set_title(
-            f"3. {trader_style.upper()} RECOMMENDED: Dynamic ${recommended_risk} Risk",
-            fontsize=13,
-            fontweight='bold',
-            pad=28
-        )
-        axs[2].text(
-            0.5,
-            1.01,
-            f"Rule: Halve to ${recommended_risk // 2} in Drawdown\n{consistency_suffix}",
-            transform=axs[2].transAxes,
-            ha='center',
-            va='bottom',
-            fontsize=10
-        )
-        axs[2].grid(True, alpha=0.3)
-        add_stats_box(axs[2], recommended_risk, recommended_stats)
-
-        # 4. Fastest Safe
-        shown = 0
-        seed = fastest_risk * 20
-        while shown < 3:
-            path, floor, result = simulate_one_path(
-                fastest_risk,
-                dynamic=True,
-                seed=seed,
-                consistency_cap=consistency_cap_amount,
-                return_result=True
-            )
-
-            if result == 'pass':
-                color = plt.cm.tab10(shown)
-                axs[3].plot(path, color=color, linewidth=2)
-                axs[3].plot(floor, color=color, linestyle='--', alpha=0.5)
-                shown += 1
-
-            seed += 1
-
-        axs[3].axhline(y=profit_target, color='green', linewidth=2)
-        axs[3].set_title(
-            f"4. FASTEST SAFE: Dynamic ${fastest_risk} Risk",
-            fontsize=13,
-            fontweight='bold',
-            pad=28
-        )
-        axs[3].text(
-            0.5,
-            1.01,
-            f"Rule: Halve to ${fastest_risk // 2} in Drawdown\n{consistency_suffix}",
-            transform=axs[3].transAxes,
-            ha='center',
-            va='bottom',
-            fontsize=10
-        )
-        axs[3].grid(True, alpha=0.3)
-        add_stats_box(axs[3], fastest_risk, fastest_stats)
-
-        plt.tight_layout()
-        st.pyplot(fig)
-
-        st.success("Simulation Complete!")
-
+    plt.tight_layout()
+    st.pyplot(fig)
+    st.caption(
+        "Chart x-axis uses simulation steps. No-trade periods count as steps but not as executed trades."
+    )
+    st.success("Simulation complete.")
 else:
-    st.info("👈 Adjust the settings in the sidebar and click **Run Simulation** to start.")
+    st.info("Adjust the settings in the sidebar and click Run Simulation to start.")
 
 st.caption("Built with Streamlit • Monte Carlo Prop Firm Simulator")
-
-# If simulate_one_path is used elsewhere in this file, ensure it's imported:
-# from prop_simulator import simulate_one_path

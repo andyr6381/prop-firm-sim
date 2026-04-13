@@ -1,649 +1,594 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Literal, Optional
+
 import numpy as np
-import matplotlib.pyplot as plt
 
-# ================== USER SETTINGS =================
-profit_target = 8000
-dd_limit = 2000
-win_rate = 0.6
-profit_factor = 1.6
-fixed_risk_amount = 250   # ← Change this freely
-consistency_limit_percent = 20   # 0 disables. Example: 20 = max 20% of target profit per winning trade
+Outcome = Literal["pass", "breach", "timeout"]
+TraderStyle = Literal["Aggressive", "Balanced", "Conservative"]
+StrategyMode = Literal["Mechanical", "Discretionary"]
 
-strategy_mode = "Mechanical"   # "Mechanical" or "Discretionary"
-be_trade_percent = 20           # Only used in Discretionary mode
 
-trader_style = "Balanced"   # "Aggressive", "Balanced", "Conservative"
+@dataclass(frozen=True)
+class StreakConfig:
+    no_trade_prob: float = 0.22
+    hot_start_prob: float = 0.04
+    cold_start_prob: float = 0.08
+    hot_shift: float = 0.18
+    cold_shift: float = -0.22
+    hot_continue_prob: float = 0.75
+    cold_continue_prob: float = 0.83
 
-max_trades = 300
-num_sims = 2000
 
- # profit_factor here represents the average reward:risk multiple of a winning trade
-# e.g. 1.5 means risk $250 to make $375
-avg_loss_r = 1.0
-avg_win_r = profit_factor
+@dataclass(frozen=True)
+class SimulationConfig:
+    profit_target: float = 3000.0
+    dd_limit: float = 2000.0
+    win_rate: float = 0.60
+    profit_factor: float = 1.6
+    strategy_mode: StrategyMode = "Mechanical"
+    be_trade_percent: float = 0.0
+    consistency_limit_percent: float = 0.0
+    max_steps: int = 300
+    num_sims: int = 3000
+    trader_style: TraderStyle = "Balanced"
+    risk_step: int = 25
+    recommendation_num_sims: int = 2000
+    streaks: StreakConfig = field(default_factory=StreakConfig)
 
-# Optional prop-firm consistency rule.
-# Example: target $3000 and limit 20% = max $600 profit per winning trade.
-consistency_cap_amount = (
-    profit_target * (consistency_limit_percent / 100)
-    if consistency_limit_percent > 0
-    else None
-)
+    @property
+    def avg_loss_r(self) -> float:
+        return 1.0
 
-# Calculate and display system expectancy in R
-if strategy_mode == "Mechanical":
-    expected_r = (win_rate * avg_win_r) - ((1 - win_rate) * avg_loss_r)
-else:
-    effective_trade_rate = 1 - (be_trade_percent / 100)
-    expected_r = (
-        effective_trade_rate
-        * ((win_rate * avg_win_r) - ((1 - win_rate) * avg_loss_r))
+    @property
+    def avg_win_r(self) -> float:
+        return self.profit_factor
+
+    @property
+    def consistency_cap_amount(self) -> Optional[float]:
+        if self.consistency_limit_percent <= 0:
+            return None
+        return self.profit_target * (self.consistency_limit_percent / 100.0)
+
+
+@dataclass(frozen=True)
+class PathResult:
+    equities: np.ndarray
+    trailing_floors: np.ndarray
+    outcome: Outcome
+    steps_taken: int
+    trades_executed: int
+    final_equity: float
+    peak_equity: float
+
+
+@dataclass(frozen=True)
+class SimulationSummary:
+    risk_dollars: int
+    dynamic: bool
+    total_runs: int
+    pass_count: int
+    breach_count: int
+    timeout_count: int
+    pass_rate: float
+    breach_rate: float
+    timeout_rate: float
+    avg_steps_to_pass: Optional[float]
+    avg_trades_to_pass: Optional[float]
+    avg_steps_all: float
+    avg_trades_all: float
+
+
+@dataclass(frozen=True)
+class Recommendation:
+    label: str
+    risk_dollars: int
+    dynamic: bool
+    summary: SimulationSummary
+    rationale: str
+
+
+@dataclass(frozen=True)
+class SimulationReport:
+    fixed: Recommendation
+    dynamic: Recommendation
+    aggressive: Recommendation
+    balanced: Recommendation
+    conservative: Recommendation
+    selected: Recommendation
+    fastest_safe: Recommendation
+
+    @property
+    def matrix_rows(self) -> List[Dict[str, object]]:
+        plans = [
+            self.fixed,
+            self.dynamic,
+            self.aggressive,
+            self.balanced,
+            self.conservative,
+            self.fastest_safe,
+        ]
+        rows: List[Dict[str, object]] = []
+        for plan in plans:
+            rows.append(
+                {
+                    "Plan": plan.label,
+                    "Risk": f"${plan.risk_dollars}",
+                    "Pass %": plan.summary.pass_rate,
+                    "Breach %": plan.summary.breach_rate,
+                    "Timeout %": plan.summary.timeout_rate,
+                    "Avg Pass Steps": plan.summary.avg_steps_to_pass,
+                    "Avg Pass Trades": plan.summary.avg_trades_to_pass,
+                }
+            )
+        return rows
+
+
+STYLE_RULES: Dict[TraderStyle, Dict[str, float]] = {
+    "Aggressive": {
+        "min_pass_rate": 50.0,
+        "min_risk_fraction": 0.35,
+        "max_risk_fraction": 0.60,
+        "pass_weight": 1.0,
+        "breach_weight": 1.0,
+        "steps_weight": 2.5,
+        "risk_weight": 0.08,
+    },
+    "Balanced": {
+        "min_pass_rate": 75.0,
+        "min_risk_fraction": 0.20,
+        "max_risk_fraction": 0.35,
+        "pass_weight": 2.0,
+        "breach_weight": 3.0,
+        "steps_weight": 1.0,
+        "risk_weight": 0.0,
+    },
+    "Conservative": {
+        "min_pass_rate": 90.0,
+        "min_risk_fraction": 0.10,
+        "max_risk_fraction": 0.20,
+        "pass_weight": 3.0,
+        "breach_weight": 5.0,
+        "steps_weight": 0.25,
+        "risk_weight": -0.05,
+    },
+}
+
+
+STYLE_DESCRIPTIONS: Dict[TraderStyle, str] = {
+    "Aggressive": "Prioritizes speed and accepts lower pass probability.",
+    "Balanced": "Balances speed with account protection.",
+    "Conservative": "Prioritizes survival and 90%+ pass probability when available.",
+}
+
+
+def calculate_expectancy(config: SimulationConfig) -> float:
+    base_expectancy = (
+        config.win_rate * config.avg_win_r
+        - (1.0 - config.win_rate) * config.avg_loss_r
     )
+    if config.strategy_mode == "Mechanical":
+        return base_expectancy
+    return (1.0 - config.be_trade_percent / 100.0) * base_expectancy
 
-print(f"System Type: {strategy_mode}")
-if strategy_mode == "Discretionary":
-    print(f"Breakeven Trades: {be_trade_percent}%")
-print(f"System Expectancy: {expected_r:.2f}R per trade")
-if consistency_cap_amount is not None:
-    print(
-        f"Consistency Rule Enabled: Max ${consistency_cap_amount:.0f} per winning trade "
-        f"({consistency_limit_percent}% of target)"
-    )
 
-def simulate_one_path(
-    risk_dollars,
-    dynamic=False,
-    seed=None,
-    consistency_cap=None,
-    return_result=False
-):
-    rng = np.random.default_rng(seed)
+def _resolve_trade_outcome(
+    config: SimulationConfig,
+    rng: np.random.Generator,
+    win_probability: float,
+) -> float:
+    if (
+        config.strategy_mode == "Discretionary"
+        and rng.random() < (config.be_trade_percent / 100.0)
+    ):
+        return 0.0
+    return config.avg_win_r if rng.random() < win_probability else -config.avg_loss_r
 
+
+def _simulate_path(
+    config: SimulationConfig,
+    risk_dollars: int,
+    dynamic: bool,
+    rng: np.random.Generator,
+    consistency_cap: Optional[float],
+    pad_on_breach: bool,
+) -> PathResult:
     equity = 0.0
     peak = 0.0
+    steps_taken = 0
+    trades_executed = 0
     equities = [equity]
-    breach_floors = [-dd_limit]
+    trailing_floors = [peak - config.dd_limit]
 
-    # --- Streak state ---
-    current_state = "normal"   # one of: normal, hot, cold
+    current_state = "normal"
     streak_remaining = 0
+    streaks = config.streaks
 
-    # --- Suggested default streak parameters ---
-    no_trade_prob = 0.22
+    while steps_taken < config.max_steps:
+        steps_taken += 1
 
-    hot_start_prob = 0.04       # hot streaks are uncommon
-    cold_start_prob = 0.08      # cold streaks are more common than hot
-
-    hot_shift = 0.18            # +18% win rate during hot streaks
-    cold_shift = -0.22          # -22% win rate during cold streaks
-
-    # Geometric-style durations:
-    # average hot streak ≈ 4 trades, average cold streak ≈ 6 trades
-    hot_continue_prob = 0.75
-    cold_continue_prob = 0.83
-
-    for _ in range(max_trades):
-
-        # -----------------------------------------------------------
-        # Occasionally skip a trade entirely to simulate quiet sessions,
-        # indecision, no setup, or low-quality market conditions.
-        # -----------------------------------------------------------
-        if rng.random() < no_trade_prob:
+        if rng.random() < streaks.no_trade_prob:
             equities.append(equity)
-            breach_floors.append(peak - dd_limit)
+            trailing_floors.append(peak - config.dd_limit)
             continue
 
-        # -----------------------------------------------------------
-        # If not already in a streak, occasionally enter a new one.
-        # Cold streaks are deliberately more common than hot streaks.
-        # -----------------------------------------------------------
         if streak_remaining <= 0:
             current_state = "normal"
-
             roll = rng.random()
-            if roll < hot_start_prob:
+            if roll < streaks.hot_start_prob:
                 current_state = "hot"
                 streak_remaining = 1
-                while rng.random() < hot_continue_prob:
+                while rng.random() < streaks.hot_continue_prob:
                     streak_remaining += 1
-
-            elif roll < hot_start_prob + cold_start_prob:
+            elif roll < streaks.hot_start_prob + streaks.cold_start_prob:
                 current_state = "cold"
                 streak_remaining = 1
-                while rng.random() < cold_continue_prob:
+                while rng.random() < streaks.cold_continue_prob:
                     streak_remaining += 1
 
-        # -----------------------------------------------------------
-        # Adjust the temporary win rate based on the current streak.
-        # Clamp so it always stays within a realistic range.
-        # -----------------------------------------------------------
         if current_state == "hot":
-            p_win = min(0.95, win_rate + hot_shift)
+            p_win = min(0.95, config.win_rate + streaks.hot_shift)
         elif current_state == "cold":
-            p_win = max(0.05, win_rate + cold_shift)
+            p_win = max(0.05, config.win_rate + streaks.cold_shift)
         else:
-            p_win = win_rate
+            p_win = config.win_rate
 
-        # Use one trade from the current streak.
         if streak_remaining > 0:
             streak_remaining -= 1
             if streak_remaining == 0:
                 current_state = "normal"
 
-        # -----------------------------------------------------------
-        # Mechanical mode: normal binary win/loss.
-        # Discretionary mode: some trades become breakeven scratches.
-        # -----------------------------------------------------------
-        if strategy_mode == "Discretionary" and rng.random() < (be_trade_percent / 100):
-            pnl_r = 0.0
-        else:
-            win = rng.random() < p_win
-            pnl_r = avg_win_r if win else -avg_loss_r
-
-        if dynamic and equity < peak:
-            current_risk = risk_dollars * 0.5
-        else:
-            current_risk = risk_dollars
-
-        pnl = current_risk * pnl_r
-
-        # Apply optional consistency cap to profitable trades.
+        current_risk = risk_dollars * 0.5 if dynamic and equity < peak else risk_dollars
+        pnl = current_risk * _resolve_trade_outcome(config, rng, p_win)
         if consistency_cap is not None and pnl > 0:
             pnl = min(pnl, consistency_cap)
-        elif consistency_cap is None and consistency_cap_amount is not None and pnl > 0:
-            pnl = min(pnl, consistency_cap_amount)
 
         equity += pnl
         peak = max(peak, equity)
+        trades_executed += 1
 
         equities.append(equity)
-        breach_floors.append(peak - dd_limit)
+        trailing_floors.append(peak - config.dd_limit)
 
-        # Trailing drawdown logic remains unchanged.
-        if equity < peak - dd_limit:
-            for _ in range(5):
-                equities.append(equity)
-                breach_floors.append(peak - dd_limit)
-            break
+        if equity < peak - config.dd_limit:
+            if pad_on_breach:
+                for _ in range(5):
+                    equities.append(equity)
+                    trailing_floors.append(peak - config.dd_limit)
+            return PathResult(
+                equities=np.array(equities),
+                trailing_floors=np.array(trailing_floors),
+                outcome="breach",
+                steps_taken=steps_taken,
+                trades_executed=trades_executed,
+                final_equity=equity,
+                peak_equity=peak,
+            )
 
-        if equity >= profit_target:
-            break
+        if equity >= config.profit_target:
+            return PathResult(
+                equities=np.array(equities),
+                trailing_floors=np.array(trailing_floors),
+                outcome="pass",
+                steps_taken=steps_taken,
+                trades_executed=trades_executed,
+                final_equity=equity,
+                peak_equity=peak,
+            )
 
-    result = 'pass' if equity >= profit_target else 'blow'
+    return PathResult(
+        equities=np.array(equities),
+        trailing_floors=np.array(trailing_floors),
+        outcome="timeout",
+        steps_taken=steps_taken,
+        trades_executed=trades_executed,
+        final_equity=equity,
+        peak_equity=peak,
+    )
 
-    if return_result:
-        return np.array(equities), np.array(breach_floors), result
 
-    return np.array(equities), np.array(breach_floors)
+def simulate_one_path(
+    config: SimulationConfig,
+    risk_dollars: int,
+    dynamic: bool = False,
+    seed: Optional[int] = None,
+) -> PathResult:
+    rng = np.random.default_rng(seed)
+    return _simulate_path(
+        config=config,
+        risk_dollars=risk_dollars,
+        dynamic=dynamic,
+        rng=rng,
+        consistency_cap=config.consistency_cap_amount,
+        pad_on_breach=True,
+    )
+
 
 def run_simulation(
-    risk_dollars,
-    dynamic=False,
-    num_sims=1500,
-    consistency_cap=None
-):
-    passes = 0
-    blows = 0
-    trades_to_pass = []
+    config: SimulationConfig,
+    risk_dollars: int,
+    dynamic: bool = False,
+    num_sims: Optional[int] = None,
+) -> SimulationSummary:
+    sim_count = num_sims or config.num_sims
+    pass_count = 0
+    breach_count = 0
+    timeout_count = 0
+    pass_steps: List[int] = []
+    pass_trades: List[int] = []
+    all_steps: List[int] = []
+    all_trades: List[int] = []
 
-    for sim in range(num_sims):
-        rng = np.random.default_rng(sim)
+    for sim_index in range(sim_count):
+        rng = np.random.default_rng(sim_index)
+        path = _simulate_path(
+            config=config,
+            risk_dollars=risk_dollars,
+            dynamic=dynamic,
+            rng=rng,
+            consistency_cap=config.consistency_cap_amount,
+            pad_on_breach=False,
+        )
+        all_steps.append(path.steps_taken)
+        all_trades.append(path.trades_executed)
 
-        equity = 0.0
-        peak = 0.0
-        trade_count = 0
-
-        current_state = "normal"
-        streak_remaining = 0
-
-        no_trade_prob = 0.22
-        hot_start_prob = 0.04
-        cold_start_prob = 0.08
-
-        hot_shift = 0.18
-        cold_shift = -0.22
-
-        hot_continue_prob = 0.75
-        cold_continue_prob = 0.83
-
-        while trade_count < max_trades:
-
-            # Quiet / no-trade period
-            if rng.random() < no_trade_prob:
-                trade_count += 1
-                continue
-
-            # Start new streak if not already in one
-            if streak_remaining <= 0:
-                current_state = "normal"
-
-                roll = rng.random()
-                if roll < hot_start_prob:
-                    current_state = "hot"
-                    streak_remaining = 1
-                    while rng.random() < hot_continue_prob:
-                        streak_remaining += 1
-
-                elif roll < hot_start_prob + cold_start_prob:
-                    current_state = "cold"
-                    streak_remaining = 1
-                    while rng.random() < cold_continue_prob:
-                        streak_remaining += 1
-
-            # Temporary win-rate adjustment
-            if current_state == "hot":
-                p_win = min(0.95, win_rate + hot_shift)
-            elif current_state == "cold":
-                p_win = max(0.05, win_rate + cold_shift)
-            else:
-                p_win = win_rate
-
-            if streak_remaining > 0:
-                streak_remaining -= 1
-                if streak_remaining == 0:
-                    current_state = "normal"
-
-            # Mechanical vs discretionary mode
-            if strategy_mode == "Discretionary" and rng.random() < (be_trade_percent / 100):
-                pnl_r = 0.0
-            else:
-                win = rng.random() < p_win
-                pnl_r = avg_win_r if win else -avg_loss_r
-
-            if dynamic and equity < peak:
-                current_risk = risk_dollars * 0.5
-            else:
-                current_risk = risk_dollars
-
-            pnl = current_risk * pnl_r
-
-            # Apply optional consistency cap to profitable trades.
-            if consistency_cap is not None and pnl > 0:
-                pnl = min(pnl, consistency_cap)
-            elif consistency_cap is None and consistency_cap_amount is not None and pnl > 0:
-                pnl = min(pnl, consistency_cap_amount)
-
-            equity += pnl
-            peak = max(peak, equity)
-
-            trade_count += 1
-
-            if equity < peak - dd_limit:
-                blows += 1
-                break
-
-            if equity >= profit_target:
-                passes += 1
-                trades_to_pass.append(trade_count)
-                break
-
+        if path.outcome == "pass":
+            pass_count += 1
+            pass_steps.append(path.steps_taken)
+            pass_trades.append(path.trades_executed)
+        elif path.outcome == "breach":
+            breach_count += 1
         else:
-            if equity >= profit_target:
-                passes += 1
-                trades_to_pass.append(trade_count)
-            else:
-                blows += 1
+            timeout_count += 1
 
-    avg_trades = round(np.mean(trades_to_pass), 1) if trades_to_pass else max_trades
+    return SimulationSummary(
+        risk_dollars=risk_dollars,
+        dynamic=dynamic,
+        total_runs=sim_count,
+        pass_count=pass_count,
+        breach_count=breach_count,
+        timeout_count=timeout_count,
+        pass_rate=round(pass_count / sim_count * 100.0, 1),
+        breach_rate=round(breach_count / sim_count * 100.0, 1),
+        timeout_rate=round(timeout_count / sim_count * 100.0, 1),
+        avg_steps_to_pass=round(float(np.mean(pass_steps)), 1) if pass_steps else None,
+        avg_trades_to_pass=round(float(np.mean(pass_trades)), 1) if pass_trades else None,
+        avg_steps_all=round(float(np.mean(all_steps)), 1),
+        avg_trades_all=round(float(np.mean(all_trades)), 1),
+    )
 
-    return {
-        'pass_rate': round(passes / num_sims * 100, 1),
-        'blow_rate': round(blows / num_sims * 100, 1),
-        'avg_trades': avg_trades
+
+def _score_style(summary: SimulationSummary, risk_dollars: int, style: TraderStyle) -> float:
+    rules = STYLE_RULES[style]
+    steps_value = (
+        summary.avg_steps_to_pass if summary.avg_steps_to_pass is not None else summary.avg_steps_all
+    )
+    return (
+        summary.pass_rate * rules["pass_weight"]
+        - summary.breach_rate * rules["breach_weight"]
+        - steps_value * rules["steps_weight"]
+        + risk_dollars * rules["risk_weight"]
+    )
+
+
+def _style_risk_range(config: SimulationConfig, style: TraderStyle) -> range:
+    rules = STYLE_RULES[style]
+    min_risk = max(50, int(config.dd_limit * rules["min_risk_fraction"]))
+    max_risk = int(config.dd_limit * rules["max_risk_fraction"])
+    return range(min_risk, max_risk + config.risk_step, config.risk_step)
+
+
+def _build_recommendation(
+    label: str,
+    rationale: str,
+    risk_dollars: int,
+    dynamic: bool,
+    summary: SimulationSummary,
+) -> Recommendation:
+    return Recommendation(
+        label=label,
+        risk_dollars=risk_dollars,
+        dynamic=dynamic,
+        summary=summary,
+        rationale=rationale,
+    )
+
+
+def get_style_recommendation(
+    config: SimulationConfig,
+    style: TraderStyle,
+) -> Recommendation:
+    best_summary: Optional[SimulationSummary] = None
+    best_risk: Optional[int] = None
+    best_score = float("-inf")
+    fallback_summary: Optional[SimulationSummary] = None
+    fallback_risk: Optional[int] = None
+    fallback_pass_rate = -1.0
+    min_required_pass_rate = STYLE_RULES[style]["min_pass_rate"]
+
+    for risk in _style_risk_range(config, style):
+        summary = run_simulation(
+            config=config,
+            risk_dollars=risk,
+            dynamic=True,
+            num_sims=config.recommendation_num_sims,
+        )
+
+        if summary.pass_rate > fallback_pass_rate:
+            fallback_pass_rate = summary.pass_rate
+            fallback_risk = risk
+            fallback_summary = summary
+
+        if summary.pass_rate < min_required_pass_rate:
+            continue
+
+        score = _score_style(summary, risk, style)
+        if best_summary is None or score > best_score:
+            best_summary = summary
+            best_risk = risk
+            best_score = score
+
+    final_risk = best_risk if best_risk is not None else fallback_risk
+    final_summary = best_summary if best_summary is not None else fallback_summary
+    if final_risk is None or final_summary is None:
+        final_risk = max(50, int(config.dd_limit * 0.10))
+        final_summary = run_simulation(
+            config=config,
+            risk_dollars=final_risk,
+            dynamic=True,
+            num_sims=config.recommendation_num_sims,
+        )
+
+    return _build_recommendation(
+        label=f"{style} Recommended",
+        rationale=STYLE_DESCRIPTIONS[style],
+        risk_dollars=final_risk,
+        dynamic=True,
+        summary=final_summary,
+    )
+
+
+def get_fastest_safe_recommendation(config: SimulationConfig) -> Recommendation:
+    best_summary: Optional[SimulationSummary] = None
+    best_risk = max(50, int(config.dd_limit * 0.05))
+    best_score = float("-inf")
+    for risk in range(best_risk, int(config.dd_limit) + config.risk_step, config.risk_step):
+        summary = run_simulation(
+            config=config,
+            risk_dollars=risk,
+            dynamic=True,
+            num_sims=config.recommendation_num_sims,
+        )
+        if summary.pass_rate < 60.0 or summary.breach_rate > 40.0:
+            continue
+
+        score = (
+            -(summary.avg_steps_to_pass or summary.avg_steps_all)
+            + summary.pass_rate * 0.1
+            - summary.breach_rate * 0.05
+        )
+        if best_summary is None:
+            best_summary = summary
+            best_risk = risk
+            best_score = score
+            continue
+        if score > best_score:
+            best_summary = summary
+            best_risk = risk
+            best_score = score
+
+    if best_summary is None:
+        fallback = get_style_recommendation(config, config.trader_style)
+        return _build_recommendation(
+            label="Fastest Safe",
+            rationale="Falls back to the selected style when no plan meets the safety floor.",
+            risk_dollars=fallback.risk_dollars,
+            dynamic=True,
+            summary=fallback.summary,
+        )
+
+    return _build_recommendation(
+        label="Fastest Safe",
+        rationale="Finds the quickest passing route that still clears the safety floor.",
+        risk_dollars=best_risk,
+        dynamic=True,
+        summary=best_summary,
+    )
+
+
+def build_simulation_report(
+    config: SimulationConfig,
+    fixed_risk_amount: int,
+) -> SimulationReport:
+    fixed = _build_recommendation(
+        label=f"Your Fixed ${fixed_risk_amount}",
+        rationale="Uses the same dollar risk on every executed trade.",
+        risk_dollars=fixed_risk_amount,
+        dynamic=False,
+        summary=run_simulation(config, fixed_risk_amount, dynamic=False, num_sims=config.num_sims),
+    )
+    dynamic = _build_recommendation(
+        label=f"Your Dynamic ${fixed_risk_amount}",
+        rationale="Uses full risk at highs and halves risk below the equity peak.",
+        risk_dollars=fixed_risk_amount,
+        dynamic=True,
+        summary=run_simulation(config, fixed_risk_amount, dynamic=True, num_sims=config.num_sims),
+    )
+    aggressive = get_style_recommendation(config, "Aggressive")
+    balanced = get_style_recommendation(config, "Balanced")
+    conservative = get_style_recommendation(config, "Conservative")
+    selected_map = {
+        "Aggressive": aggressive,
+        "Balanced": balanced,
+        "Conservative": conservative,
     }
-
-# ================== FIND RECOMMENDED ==================
-print("Finding optimal risk...\n")
-print(f"Testing risk sizes from ${min_risk if 'min_risk' in locals() else int(dd_limit * 0.05)} to ${int(dd_limit * 0.25)} in $25 increments")
-
-# ================== TRADER STYLE TARGETS ==================
-if trader_style == "Aggressive":
-    min_required_pass_rate = 50
-    style_description = "Optimize for speed and accept higher failure risk"
-elif trader_style == "Conservative":
-    min_required_pass_rate = 90
-    style_description = "Prioritize account survival and high pass probability"
-else:
-    min_required_pass_rate = 75
-    style_description = "Balanced between speed and safety"
-
-print(f"Trader Style: {trader_style}")
-print(f"Target Minimum Pass Rate: {min_required_pass_rate}%")
-print(f"Style Logic: {style_description}\n")
-
-best_score = -999
-recommended_risk = 200
-recommended_dynamic = True
-recommended_stats = None
-
-fastest_score = -999
-fastest_risk = 200
-fastest_dynamic = True
-fastest_stats = None
-
-min_risk = max(50, int(dd_limit * 0.05))
-
- # Allow each style to search a different range of risk sizes.
-if trader_style == "Aggressive":
-    max_risk = int(dd_limit * 0.60)
-elif trader_style == "Conservative":
-    max_risk = int(dd_limit * 0.20)
-else:
-    max_risk = int(dd_limit * 0.35)
-
-# Allow the "Fastest Safe" route to test up to the full drawdown limit.
-# This means on a $2000 trailing DD account it can evaluate risk sizes up to $2000.
-fastest_max_risk = int(dd_limit)
-
-risk_step = 25
-
-risk_sizes = list(range(min_risk, fastest_max_risk + risk_step, risk_step))
-
-for risk in risk_sizes:
-    stats = run_simulation(risk, dynamic=True, num_sims=2000)
-
-    print(
-        f"${risk}: Pass {stats['pass_rate']}% | "
-        f"Blow {stats['blow_rate']}% | "
-        f"Avg Trades {stats['avg_trades']}"
+    fastest_safe = get_fastest_safe_recommendation(config)
+    return SimulationReport(
+        fixed=fixed,
+        dynamic=dynamic,
+        aggressive=aggressive,
+        balanced=balanced,
+        conservative=conservative,
+        selected=selected_map[config.trader_style],
+        fastest_safe=fastest_safe,
     )
 
-    # Style-specific scoring so each recommendation can choose
-    # a different risk size instead of all collapsing to the same value.
-    if trader_style == "Aggressive":
-        # Strongly favour speed. Accept lower pass rate if it passes the threshold.
-        score = (
-            stats['pass_rate'] * 1.0
-            - stats['blow_rate'] * 1.5
-            - stats['avg_trades'] * 2.5
-            + risk * 0.08
+
+def sample_paths(
+    config: SimulationConfig,
+    risk_dollars: int,
+    dynamic: bool,
+    count: int = 3,
+    preferred_outcome: Optional[Outcome] = None,
+    start_seed: int = 0,
+    max_attempts: int = 500,
+) -> List[PathResult]:
+    paths: List[PathResult] = []
+    seed = start_seed
+    attempts = 0
+
+    while len(paths) < count and attempts < max_attempts:
+        path = simulate_one_path(
+            config=config,
+            risk_dollars=risk_dollars,
+            dynamic=dynamic,
+            seed=seed,
         )
+        if preferred_outcome is None or path.outcome == preferred_outcome:
+            paths.append(path)
+        seed += 1
+        attempts += 1
 
-    elif trader_style == "Conservative":
-        # Strongly favour survival and low blow-up probability.
-        score = (
-            stats['pass_rate'] * 3.0
-            - stats['blow_rate'] * 5.0
-            - stats['avg_trades'] * 0.25
-            - risk * 0.05
-        )
+    if len(paths) < count and preferred_outcome is not None:
+        seed = start_seed + max_attempts
+        while len(paths) < count and attempts < max_attempts * 2:
+            path = simulate_one_path(
+                config=config,
+                risk_dollars=risk_dollars,
+                dynamic=dynamic,
+                seed=seed,
+            )
+            paths.append(path)
+            seed += 1
+            attempts += 1
 
-    else:
-        # Balanced: middle ground between speed and safety.
-        score = (
-            stats['pass_rate'] * 2.0
-            - stats['blow_rate'] * 3.0
-            - stats['avg_trades'] * 1.0
-        )
+    return paths
 
-    # Main recommendation now depends on the selected trader style.
-    # Only consider risk sizes that meet the user's desired pass-rate threshold.
-    if (
-        risk <= max_risk
-        and stats['pass_rate'] >= min_required_pass_rate
-        and score > best_score
-    ):
-        best_score = score
-        recommended_risk = risk
-        recommended_dynamic = True
-        recommended_stats = stats
 
-    # If nothing meets the style threshold, keep whichever setup has
-    # the highest pass rate within the allowed risk range.
-    if risk <= max_risk:
-        if recommended_stats is None or stats['pass_rate'] > recommended_stats['pass_rate']:
-            recommended_risk = risk
-            recommended_dynamic = True
-            recommended_stats = stats
-
-    # Separate "fastest safe" recommendation.
-    # First require the setup to still be reasonably safe.
-    # Then choose the one that reaches the target in the fewest trades.
-    if stats['pass_rate'] >= 60 and stats['blow_rate'] <= 40:
-        fast_score = -stats['avg_trades']
-
-        # If two risk sizes have similar speed, prefer the safer one.
-        fast_score += stats['pass_rate'] * 0.1
-        fast_score -= stats['blow_rate'] * 0.05
-
-        if fast_score > fastest_score:
-            fastest_score = fast_score
-            fastest_risk = risk
-            fastest_dynamic = True
-            fastest_stats = stats
-
-if recommended_stats is None:
-    recommended_stats = {'pass_rate': 0, 'blow_rate': 100, 'avg_trades': max_trades}
-
-if fastest_stats is None:
-    fastest_stats = {'pass_rate': 0, 'blow_rate': 100, 'avg_trades': max_trades}
-
-# If nothing met the safety threshold, fall back to the highest pass-rate option.
-if fastest_stats['pass_rate'] == 0:
-    fastest_risk = recommended_risk
-    fastest_dynamic = recommended_dynamic
-    fastest_stats = recommended_stats
-
-half_risk = recommended_risk // 2
-
-print("=== RECOMMENDATION ===")
-print(f"Trader Style: {trader_style}")
-print(f"Best: Dynamic ${recommended_risk} → halve to ${half_risk} when in drawdown")
-print(
-    f"Pass Rate: {recommended_stats['pass_rate']}% | "
-    f"Blow Rate: {recommended_stats['blow_rate']}% | "
-    f"Avg Trades: {recommended_stats['avg_trades']}"
-)
-
-print("\n=== FASTEST SAFE OPTION ===")
-print(f"Best: Dynamic ${fastest_risk} → halve to ${fastest_risk // 2} when in drawdown")
-print(
-    f"Pass Rate: {fastest_stats['pass_rate']}% | "
-    f"Blow Rate: {fastest_stats['blow_rate']}% | "
-    f"Avg Trades: {fastest_stats['avg_trades']}"
-)
-
-# ================== CHARTS ==================
-fig, axs = plt.subplots(2, 2, figsize=(16, 12))
-axs = axs.flatten()
-
-def add_stats_box(ax, pass_rate, blow_rate, avg_trades=None):
-    text = f"Pass Rate: {pass_rate}%\nBlow Rate: {blow_rate}%"
-    if avg_trades is not None:
-        text += f"\nAvg Trades: {avg_trades}"
-    ax.text(
-        0.98,
-        0.02,
-        text,
-        transform=ax.transAxes,
-        fontsize=10,
-        verticalalignment='bottom',
-        horizontalalignment='right',
-        bbox=dict(
-            boxstyle="round,pad=0.5",
-            facecolor='white',
-            edgecolor='black',
-            alpha=0.9
-        )
-    )
-
-fixed_stats = run_simulation(fixed_risk_amount, dynamic=False, num_sims=num_sims)
-dynamic_stats = run_simulation(fixed_risk_amount, dynamic=True, num_sims=num_sims)
-
-# Chart 1: Fixed
-for i in range(3):
-    path, floor = simulate_one_path(fixed_risk_amount, dynamic=False)
-    color = plt.cm.tab10(i)
-    axs[0].plot(path, color=color, linewidth=2.0, alpha=0.9, label=f'Fixed Path {i+1}')
-    axs[0].plot(floor, color=color, linestyle='--', alpha=0.55)
-axs[0].axhline(y=profit_target, color='green', linestyle='-', linewidth=2.5, label='Pass Target')
-consistency_suffix = (
-    f'Consistency Cap: ${consistency_cap_amount:.0f} ({consistency_limit_percent}%)'
-    if consistency_cap_amount is not None
-    else 'No Consistency Cap'
-)
-
-axs[0].set_title(
-    f'1. FIXED ${fixed_risk_amount} Risk',
-    fontsize=13,
-    fontweight='bold',
-    pad=28
-)
-axs[0].text(
-    0.5,
-    1.01,
-    f'Your Current Style\n{consistency_suffix}',
-    transform=axs[0].transAxes,
-    ha='center',
-    va='bottom',
-    fontsize=10,
-    fontweight='normal'
-)
-axs[0].set_ylabel('Profit / Loss ($)')
-axs[0].legend(loc='upper left')
-axs[0].grid(True, alpha=0.3)
-add_stats_box(
-    axs[0],
-    fixed_stats['pass_rate'],
-    fixed_stats['blow_rate'],
-    fixed_stats['avg_trades']
-)
-
-# Chart 2: Dynamic at same risk
-for i in range(3):
-    path, floor = simulate_one_path(fixed_risk_amount, dynamic=True)
-    color = plt.cm.tab10(i)
-    axs[1].plot(path, color=color, linewidth=2.0, alpha=0.9, label=f'Dynamic Path {i+1}')
-    axs[1].plot(floor, color=color, linestyle='--', alpha=0.55)
-axs[1].axhline(y=profit_target, color='green', linestyle='-', linewidth=2.5, label='Pass Target')
-axs[1].set_title(
-    f'2. DYNAMIC ${fixed_risk_amount} Risk',
-    fontsize=13,
-    fontweight='bold',
-    pad=28
-)
-axs[1].text(
-    0.5,
-    1.01,
-    f'Rule: Halve Risk in Drawdown\n{consistency_suffix}',
-    transform=axs[1].transAxes,
-    ha='center',
-    va='bottom',
-    fontsize=10,
-    fontweight='normal'
-)
-axs[1].set_ylabel('Profit / Loss ($)')
-axs[1].legend(loc='upper left')
-axs[1].grid(True, alpha=0.3)
-add_stats_box(
-    axs[1],
-    dynamic_stats['pass_rate'],
-    dynamic_stats['blow_rate'],
-    dynamic_stats['avg_trades']
-)
-
-# Chart 3: Recommended
-shown = 0
-seed = recommended_risk * 10
-
-while shown < 3:
-    path, floor, result = simulate_one_path(
-        recommended_risk,
-        dynamic=recommended_dynamic,
-        seed=seed,
-        return_result=True
-    )
-
-    if result == 'pass':
-        color = plt.cm.tab10(shown)
-        axs[2].plot(path, color=color, linewidth=2.0, alpha=0.9,
-                    label=f'Recommended Path {shown+1}')
-        axs[2].plot(floor, color=color, linestyle='--', alpha=0.55)
-        shown += 1
-
-    seed += 1
-
-axs[2].axhline(y=profit_target, color='green', linestyle='-', linewidth=2.5, label='Pass Target')
-axs[2].set_title(
-    f'3. SAFEST: Dynamic ${recommended_risk} Risk',
-    fontsize=13,
-    fontweight='bold',
-    pad=28
-)
-axs[2].text(
-    0.5,
-    1.01,
-    f'Rule: Halve to ${half_risk} in Drawdown\n{consistency_suffix}',
-    transform=axs[2].transAxes,
-    ha='center',
-    va='bottom',
-    fontsize=10,
-    fontweight='normal'
-)
-axs[2].set_xlabel('Number of Trades')
-axs[2].set_ylabel('Profit / Loss ($)')
-axs[2].legend(loc='upper left')
-axs[2].grid(True, alpha=0.3)
-add_stats_box(
-    axs[2],
-    recommended_stats['pass_rate'],
-    recommended_stats['blow_rate'],
-    recommended_stats['avg_trades']
-)
-
-# Chart 4: Fastest Safe
-shown = 0
-seed = fastest_risk * 20
-
-while shown < 3:
-    path, floor, result = simulate_one_path(
-        fastest_risk,
-        dynamic=fastest_dynamic,
-        seed=seed,
-        return_result=True
-    )
-
-    if result == 'pass':
-        color = plt.cm.tab10(shown)
-        axs[3].plot(
-            path,
-            color=color,
-            linewidth=2.0,
-            alpha=0.9,
-            label=f'Fast Path {shown+1}'
-        )
-        axs[3].plot(floor, color=color, linestyle='--', alpha=0.55)
-        shown += 1
-
-    seed += 1
-
-axs[3].axhline(y=profit_target, color='green', linestyle='-', linewidth=2.5, label='Pass Target')
-axs[3].set_title(
-    f'4. FASTEST SAFE: Dynamic ${fastest_risk} Risk',
-    fontsize=13,
-    fontweight='bold',
-    pad=28
-)
-axs[3].text(
-    0.5,
-    1.01,
-    f'Rule: Halve to ${fastest_risk // 2} in Drawdown\n{consistency_suffix}',
-    transform=axs[3].transAxes,
-    ha='center',
-    va='bottom',
-    fontsize=10,
-    fontweight='normal'
-)
-axs[3].set_xlabel('Number of Trades')
-axs[3].set_ylabel('Profit / Loss ($)')
-axs[3].legend(loc='upper left')
-axs[3].grid(True, alpha=0.3)
-add_stats_box(
-    axs[3],
-    fastest_stats['pass_rate'],
-    fastest_stats['blow_rate'],
-    fastest_stats['avg_trades']
-)
-
-plt.tight_layout()
-plt.show()
+__all__ = [
+    "PathResult",
+    "Recommendation",
+    "SimulationConfig",
+    "SimulationReport",
+    "SimulationSummary",
+    "StreakConfig",
+    "STYLE_DESCRIPTIONS",
+    "build_simulation_report",
+    "calculate_expectancy",
+    "get_fastest_safe_recommendation",
+    "get_style_recommendation",
+    "run_simulation",
+    "sample_paths",
+    "simulate_one_path",
+]
