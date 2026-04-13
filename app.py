@@ -126,18 +126,33 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
         )
         
         def get_style_recommendation(style_name):
+            # Different styles should search different risk ranges and use
+            # different scoring so the recommendations do not all collapse
+            # to the same low-risk value.
             if style_name == "Aggressive":
                 min_required_pass_rate = 50
+                style_min_risk = max(50, int(dd_limit * 0.35))
+                style_max_risk = int(dd_limit * 0.60)
+
             elif style_name == "Conservative":
                 min_required_pass_rate = 90
-            else:
-                min_required_pass_rate = 75
+                style_min_risk = max(50, int(dd_limit * 0.10))
+                style_max_risk = int(dd_limit * 0.20)
 
-            best_score = -999
+            else:  # Balanced
+                min_required_pass_rate = 75
+                style_min_risk = max(50, int(dd_limit * 0.20))
+                style_max_risk = int(dd_limit * 0.35)
+
+            best_score = -999999
             best_risk = None
             best_stats = None
 
-            for risk in range(min_risk, max_risk + risk_step, risk_step):
+            fallback_risk = None
+            fallback_stats = None
+            fallback_pass = -1
+
+            for risk in range(style_min_risk, style_max_risk + risk_step, risk_step):
                 stats = run_simulation(
                     risk,
                     dynamic=True,
@@ -145,19 +160,50 @@ if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
                     consistency_cap=consistency_cap_amount
                 )
 
-                score = (
-                    stats['pass_rate'] * 2
-                    - stats['blow_rate'] * 3
-                    - stats['avg_trades'] * 0.5
-                )
+                # Keep track of the highest pass-rate setup in case nothing
+                # satisfies the desired style threshold.
+                if stats['pass_rate'] > fallback_pass:
+                    fallback_pass = stats['pass_rate']
+                    fallback_risk = risk
+                    fallback_stats = stats
 
-                if (
-                    stats['pass_rate'] >= min_required_pass_rate
-                    and score > best_score
-                ):
+                if stats['pass_rate'] < min_required_pass_rate:
+                    continue
+
+                if style_name == "Aggressive":
+                    # Prioritize speed and accept materially higher risk.
+                    score = (
+                        stats['pass_rate'] * 1.0
+                        - stats['blow_rate'] * 1.0
+                        - stats['avg_trades'] * 2.5
+                        + risk * 0.08
+                    )
+
+                elif style_name == "Conservative":
+                    # Prioritize survival and penalize larger size.
+                    score = (
+                        stats['pass_rate'] * 3.0
+                        - stats['blow_rate'] * 5.0
+                        - stats['avg_trades'] * 0.25
+                        - risk * 0.05
+                    )
+
+                else:  # Balanced
+                    # Middle ground between pass rate and speed.
+                    score = (
+                        stats['pass_rate'] * 2.0
+                        - stats['blow_rate'] * 3.0
+                        - stats['avg_trades'] * 1.0
+                    )
+
+                if score > best_score:
                     best_score = score
                     best_risk = risk
                     best_stats = stats
+
+            # Fall back to the highest pass-rate setup if nothing meets the threshold.
+            if best_stats is None:
+                return fallback_risk, fallback_stats
 
             return best_risk, best_stats
 
